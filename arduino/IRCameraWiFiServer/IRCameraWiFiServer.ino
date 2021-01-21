@@ -52,8 +52,13 @@ xQueueHandle xQueue;
 
 int total = 0;
 
+int LED_CH=2;
+
 void setup()
 {
+    ledcSetup(LED_CH, 5000, 10);
+    ledcAttachPin(2, LED_CH);
+
     Serial.begin(115200);
     delay(1000);
 
@@ -82,6 +87,7 @@ void setup()
 
 
     
+    ledcWrite(LED_CH, 0);
     int retry = 0;
     while (WiFi.status() != WL_CONNECTED) {
         delay(1000);
@@ -94,7 +100,8 @@ void setup()
           retry = 0;
         }
     }
-
+    
+    ledcWrite(LED_CH, 50);
     Serial.println("");
     Serial.println("WiFi connected.");
     Serial.println("IP address: ");
@@ -137,12 +144,14 @@ int dataVal = 0;
 void loop(){
   webSocket.loop();
   
+//  ledcWrite(LED_CH, 100);
   WiFiClient client = server.available();   // listen for incoming clients
-
+  
   if (client) {
     Serial.println("New Client.");
     String currentLine = "";
     while (client.connected()) {
+      
       if (client.available()) {
         char c = client.read();
         Serial.write(c);
@@ -314,14 +323,18 @@ void receiveTask( void * parameter )
   vTaskDelete( NULL );
 }
 
+
+int clidentCount=0;
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
     
     switch(type) {
         case WStype_DISCONNECTED:
+            clidentCount--;
             Serial.println("Socket Disconnected.");
             break;
         case WStype_CONNECTED:
             {
+                clidentCount++;
                 IPAddress ip = webSocket.remoteIP(num);
                 Serial.println("Socket Connected.");
                 // send message to client
@@ -341,10 +354,40 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
     }
 }
 
+
+bool TXLedToggle=false;
 // Some precision is lost during compression but data transfer speeds are
 // much faster. We're able to get a higher frame rate by compressing data.
+
+
+
+
 void compressAndSend() 
 {
+    ledcWrite(LED_CH, TXLedToggle?200:20);
+    if(clidentCount==0){
+      TXLedToggle=false;
+      return;
+    }
+    TXLedToggle=!TXLedToggle;
+    int16_t sendBin[768];
+    
+    for (int x = 0 ; x < 768; x += 1)
+    {
+        sendBin[x]= round(mlx90640To[x] *100);
+    }
+    webSocket.broadcastBIN((uint8_t* )sendBin,sizeof(sendBin));
+}
+
+void compressAndSend_c() 
+{
+    ledcWrite(LED_CH, TXLedToggle?200:20);
+    if(clidentCount==0){
+      TXLedToggle=false;
+      return;
+    }
+    TXLedToggle=!TXLedToggle;
+    
     String resultText = "";
     int numDecimals = 1;
     int accuracy = 8;
