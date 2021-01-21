@@ -7,21 +7,31 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <Wire.h>  // Used for I2C communication
-#include <SFE_MicroOLED.h>  // Include the SFE_MicroOLED library
+//#include <SFE_Micro//oled.h>  // Include the SFE_Micro//oled library
 #include <WebSocketsServer.h>
 #include "MLX90640_API.h"
 #include "MLX90640_I2C_Driver.h"
-#include "env.h"
+//#include "env.h"
 #include "webpage.h"
 
-// MicroOLED variables
+// Micro//oled variables
 #define PIN_RESET 9  
 #define DC_JUMPER 1 
-// MicroOLED oled(PIN_RESET, DC_JUMPER);    // I2C declaration
+// Micro//oled //oled(PIN_RESET, DC_JUMPER);    // I2C declaration
 
+
+#define wifi_term_ssid "AAAPPP"
+#define wifi_term_pw "88888888"
+
+
+#define wifi_AP_ssid "TermalCam"
+#define wifi_AP_pw "88888888"
+
+
+bool Term_or_AP=true;
 // WiFi variables
-const char* ssid     = wifi_ssid;
-const char* password = wifi_pw;
+const char* ssid     = wifi_term_ssid;
+const char* password = wifi_term_pw;
 WiFiServer server(80);
 
 
@@ -53,8 +63,25 @@ void setup()
     Serial.println(ssid);
 
     // Connect to the WiFi network
-    WiFi.begin(ssid, password);
+
+
+    if(Term_or_AP)
+    {
+      WiFi.begin(wifi_term_ssid, wifi_term_pw); //as terminal device
+    }
+    else
+    {
+      WiFi.softAP(wifi_AP_ssid, wifi_AP_pw); //as AP
+    }
+
+
+    
     WiFi.setHostname("esp32thing1");
+
+
+
+
+    
     int retry = 0;
     while (WiFi.status() != WL_CONNECTED) {
         delay(1000);
@@ -160,18 +187,18 @@ void Task1( void * parameter )
     int tick = 0;
     const byte MLX90640_address = 0x33; //Default 7-bit unshifted address of the MLX90640
     
-    MicroOLED oled(PIN_RESET, DC_JUMPER);    // I2C declaration
+//    Micro//oled //oled(PIN_RESET, DC_JUMPER);    // I2C declaration
     Wire.setClock(400000L);
     Wire.begin();
     
-    oled.begin();    // Initialize the OLED
-    oled.clear(ALL); // Clear the display's internal memory
+    //oled.begin();    // Initialize the //oled
+    //oled.clear(ALL); // Clear the display's internal memory
     //oled.display();  // Display what's in the buffer (splashscreen)
     delay(50);
-    oled.clear(PAGE); // Clear the buffer
-    oled.print("Welcome!");
+    //oled.clear(PAGE); // Clear the buffer
+    //oled.print("Welcome!");
     delay(400);
-    oled.display(); // Draw on the screen
+    //oled.display(); // Draw on the screen
     paramsMLX90640 mlx90640;
     Wire.beginTransmission((uint8_t)MLX90640_address);
     if (Wire.endTransmission() != 0) {
@@ -250,14 +277,14 @@ void Task1( void * parameter )
         minOutput.concat(minReading);
         String avgOutput = "Avg:";
         avgOutput.concat(avgReading);
-        oled.setCursor(0, 0);
-        oled.clear(PAGE); // Clear the buffer
-        oled.print(output);
-        oled.setCursor(0, 10);
-        oled.print(minOutput);
-        oled.setCursor(0, 20);
-        oled.print(avgOutput);
-        oled.display(); // Draw on the screen
+        //oled.setCursor(0, 0);
+        //oled.clear(PAGE); // Clear the buffer
+        //oled.print(output);
+        //oled.setCursor(0, 10);
+        //oled.print(minOutput);
+        //oled.setCursor(0, 20);
+        //oled.print(avgOutput);
+        //oled.display(); // Draw on the screen
         tick = 0;
       }
       /* time to block the task until the queue has free space */
