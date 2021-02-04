@@ -3,7 +3,6 @@
 
  Created by: Christopher Black
  */
-
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <Wire.h>  // Used for I2C communication
@@ -20,18 +19,16 @@
 // Micro//oled //oled(PIN_RESET, DC_JUMPER);    // I2C declaration
 
 
-#define wifi_term_ssid "AAAPPP"
+#define wifi_term_ssid "ThermalCam AP"
 #define wifi_term_pw "88888888"
 
 
-#define wifi_AP_ssid "TermalCam"
+#define wifi_AP_ssid "ThermalCam"
 #define wifi_AP_pw "88888888"
 
 
-bool Term_or_AP=true;
+bool Term_or_AP=false;
 // WiFi variables
-const char* ssid     = wifi_term_ssid;
-const char* password = wifi_term_pw;
 WiFiServer server(80);
 
 
@@ -53,54 +50,62 @@ xQueueHandle xQueue;
 int total = 0;
 
 int LED_CH=2;
+int Servo_CH=3;
 
 void setup()
 {
     ledcSetup(LED_CH, 5000, 10);
     ledcAttachPin(2, LED_CH);
 
+    
+//    ledcSetup(Servo_CH, 25, 12);
+//    ledcAttachPin(3, Servo_CH);
+
+    
     Serial.begin(115200);
     delay(1000);
 
-    Serial.println();
-    Serial.println();
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-
     // Connect to the WiFi network
 
-
+    
+    ledcWrite(LED_CH, 0);
+    WiFi.setHostname("esp32thing1");
     if(Term_or_AP)
     {
-      WiFi.begin(wifi_term_ssid, wifi_term_pw); //as terminal device
+      Serial.println();
+      Serial.println();
+      Serial.print("Connecting to ");
+      Serial.println(wifi_term_ssid);
+
+      int retry = 0;
+      while (WiFi.status() != WL_CONNECTED) {
+          delay(1000);
+          retry += 1;
+          Serial.print(".");
+          if (retry > 4 ) {
+            // Retry after 5 seconds
+            Serial.println("");
+            WiFi.begin(wifi_term_ssid, wifi_term_pw);
+            retry = 0;
+          }
+      }
+      
     }
     else
     {
       WiFi.softAP(wifi_AP_ssid, wifi_AP_pw); //as AP
+      
+      IPAddress local_ip(192,168,123,1);
+      IPAddress gateway(192,168,123,1);
+      IPAddress subnet(255,255,255,0);
+      
+      WiFi.softAPConfig(local_ip, gateway, subnet);
     }
 
 
-    
-    WiFi.setHostname("esp32thing1");
 
 
 
-
-    
-    ledcWrite(LED_CH, 0);
-    int retry = 0;
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(1000);
-        retry += 1;
-        Serial.print(".");
-        if (retry > 4 ) {
-          // Retry after 5 seconds
-          Serial.println("");
-          WiFi.begin(ssid, password);
-          retry = 0;
-        }
-    }
-    
     ledcWrite(LED_CH, 50);
     Serial.println("");
     Serial.println("WiFi connected.");
@@ -190,6 +195,12 @@ void loop(){
   }
 }
 
+int speedIdx2FPS(int idx)
+{
+  return 1<<(idx-1);
+}
+
+int frameSpeedIdx=4;
 // Capture thermal image on a different thread
 void Task1( void * parameter )
 {
@@ -228,11 +239,21 @@ void Task1( void * parameter )
     if (status != 0) {
         Serial.println("Parameter extraction failed");
     }
-    MLX90640_SetRefreshRate(MLX90640_address, 0x05);
+    int cur_frameSpeedIdx=frameSpeedIdx;
+    MLX90640_SetRefreshRate(MLX90640_address,cur_frameSpeedIdx);
     Wire.setClock(1000000L);
     float mlx90640Background[768];
     for( ;; )
     {
+      bool skipFrame=false;
+      if(cur_frameSpeedIdx!=frameSpeedIdx)//thread danger but whatever
+      {
+        cur_frameSpeedIdx=frameSpeedIdx;
+        MLX90640_SetRefreshRate(MLX90640_address,cur_frameSpeedIdx);
+        
+        vTaskDelay(20/ portTICK_PERIOD_MS);
+        skipFrame=true;
+      }
 //      String startMessage = "Capturing thermal image on core ";
 //      startMessage.concat(xPortGetCoreID());
 //      Serial.println( startMessage );
@@ -260,7 +281,7 @@ void Task1( void * parameter )
 //      Serial.print( 1000.0 / (stopReadTime - startTime), 2);
 //      Serial.println(" Hz");
       tick += 1;
-      if (tick > 10) {
+      if (false && tick > 10 ) {
         float maxReading = mlx90640To[0];
         float minReading = mlx90640To[0];
         float avgReading = mlx90640To[0];
@@ -298,9 +319,10 @@ void Task1( void * parameter )
       }
       /* time to block the task until the queue has free space */
       const TickType_t xTicksToWait = pdMS_TO_TICKS(100);
-      xQueueSendToFront( xQueue, &mlx90640Background, xTicksToWait );
+      if(skipFrame==false)
+        xQueueSendToFront( xQueue, &mlx90640Background, xTicksToWait );
       
-      const TickType_t xDelay = 20 / portTICK_PERIOD_MS; // 8 Hz is 1/8 second
+      const TickType_t xDelay = 20/ portTICK_PERIOD_MS; // 8 Hz is 1/8 second
       vTaskDelay(xDelay);
   }
 }
@@ -323,6 +345,43 @@ void receiveTask( void * parameter )
   vTaskDelete( NULL );
 }
 
+char* strJump(char* str,char* pattern)
+{
+  char * searchRes=strstr(str,pattern);
+  if(searchRes==NULL)return NULL;
+
+  return searchRes+strlen(pattern);
+}
+
+
+char* strOriginJump(char* str,char* pattern)
+{
+  if(str==NULL || pattern==NULL)return NULL;
+  while(*str!='\0')
+  {
+    
+    if(*pattern=='\0')
+    {
+      return str;
+    }
+    
+    if(*pattern!=*str)
+    {
+      break;
+    }
+    
+    str++;
+    pattern++;
+  }
+  if(*pattern=='\0')
+  {
+    return str;
+  }
+
+  return NULL;
+}
+
+
 
 int clidentCount=0;
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
@@ -343,6 +402,23 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
             break;
         case WStype_TEXT:
             // send message to client
+            {
+              Serial.println((char*)payload);
+
+              
+              const char *curs=strJump((char*)payload,"\"speedIdx\":");
+              Serial.println((char*)curs);
+              if(curs!=NULL)
+              {
+                int offset=12;
+                const char* nPayLoad=curs;
+                if(nPayLoad[0]>='0' && nPayLoad[0]<='5')
+                {
+                  frameSpeedIdx=nPayLoad[0]-'0';
+                }
+                
+              }
+            }
             break;
         case WStype_BIN:
         case WStype_ERROR:      
@@ -377,81 +453,4 @@ void compressAndSend()
         sendBin[x]= round(mlx90640To[x] *100);
     }
     webSocket.broadcastBIN((uint8_t* )sendBin,sizeof(sendBin));
-}
-
-void compressAndSend_c() 
-{
-    ledcWrite(LED_CH, TXLedToggle?200:20);
-    if(clidentCount==0){
-      TXLedToggle=false;
-      return;
-    }
-    TXLedToggle=!TXLedToggle;
-    
-    String resultText = "";
-    int numDecimals = 1;
-    int accuracy = 8;
-    int previousValue = round(mlx90640To[0] * pow(10, numDecimals));
-    previousValue = previousValue - (previousValue % accuracy);
-    resultText.concat(numDecimals);
-    resultText.concat(accuracy);
-    resultText.concat(previousValue);
-    resultText.concat(".");
-    char currentLetter = 'A';
-    char previousLetter = 'A';
-    int letterCount = 1;
-    int columnCount = 32;
-    
-    for (int x = 1 ; x < 768; x += 1)
-    {
-        int currentValue = round(mlx90640To[x] * pow(10, numDecimals));
-        currentValue = currentValue - (currentValue % accuracy);
-        if(x % columnCount == 0) {
-            previousValue = round(mlx90640To[x - columnCount] * pow(10, numDecimals));
-            previousValue = previousValue - (previousValue % accuracy);
-        }
-        int correction = 0;
-        int diffIndex = (int)(currentValue - previousValue);
-        if(abs(diffIndex) > 0) {
-            diffIndex = diffIndex / accuracy;
-        }
-        if(diffIndex > 25) {
-            //correction = (diffIndex - 25) * accuracy;
-            diffIndex = 25;
-        } else if(diffIndex < -25) {
-            //correction = (diffIndex + 25) * accuracy;
-            diffIndex = -25;
-        }
-
-        if(diffIndex >= 0) {
-            currentLetter = positive[diffIndex];
-        } else {
-            currentLetter = negative[abs(diffIndex)];
-        }
-        
-        if(x == 1) {
-            previousLetter = currentLetter;
-        } else if(currentLetter != previousLetter) {
-            
-            if(letterCount == 1) {
-                resultText.concat(previousLetter);
-            } else {
-                resultText.concat(letterCount);
-                resultText.concat(previousLetter);
-            }
-            previousLetter = currentLetter;
-            letterCount = 1;
-        } else {
-            letterCount += 1;
-        }
-        
-        previousValue = currentValue - correction;
-    }
-    if(letterCount == 1) {
-        resultText.concat(previousLetter);
-    } else {
-        resultText.concat(letterCount);
-        resultText.concat(previousLetter);
-    }
-    webSocket.broadcastTXT(resultText);
 }

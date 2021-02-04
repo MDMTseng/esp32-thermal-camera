@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang='en'>
+<html lang='en'  manifest="cache.manifest">
 
 <head>
     <meta charset='UTF-8'>
@@ -11,20 +11,77 @@
             padding: 0;
         }
 
+        .fullFrame {
+            width: 100%;
+            height: 100%;
+        }
         .cButton {
             width: 80px;
-            height: 20px;
-            margin:2px;
+            height: 30px;
+            margin:1px;
         }
 
+        .sButton {
+            width: 10px;
+            height: 30px;
+            margin:0px;
+        }
         #temperature {
             padding: 5px;
-            width: 470px;
             font-size: 1.2em;
             text-align: left;
         }
+        .left {
+          float:left;
+        }
+        .right {
+          width: 100%;
+          height:100%;
+        }
     </style>
+
     <script>
+      // // Register the service worker
+      // if ('serviceWorker' in navigator) {
+      //   navigator.serviceWorker.register('./service-worker.js').then(function(registration) {
+      //     // Registration was successful
+      //     console.log('ServiceWorker registration successful with scope: ', registration.scope);
+      // }).catch(function(err) {
+      //     // registration failed :(
+      //       console.log('ServiceWorker registration failed: ', err);
+      //     });
+      // }
+    </script>
+    <script>
+
+
+    function ls_setCamUrl(url)
+    {
+      return localStorage.setItem("ThermalCamUrl",url);
+    }
+    function ls_getCamUrl()
+    {
+      return localStorage.getItem("ThermalCamUrl");
+    }
+
+
+    
+    function ls_setJson(key,data)
+    {
+      return localStorage.setItem(key,JSON.stringify(data));
+    }
+    function ls_getJson(key)
+    {
+      let str = localStorage.getItem(key);
+      if(str===undefined || str===null)return undefined;
+      try {
+        return JSON.parse(str);
+      } catch (e) {
+      }
+      return undefined;
+    }
+
+
     var warn_audio = new Audio('warningSFX.mp3');
 
     function heatMapColorforValue(value,low=0,middle=0.5,high=1){
@@ -49,6 +106,13 @@
 
 
       return "hsl(" + h + ","+s+"%,"+l+"%)";
+    }
+
+    function url_setDefault()
+    {
+      
+      let input_IP_DOM=document.getElementById('input_IP');
+      input_IP_DOM.value="thermal.local:81";
     }
 
 
@@ -153,33 +217,207 @@
 
     function numberFormat(num)
     {
-      let x100=Math.round(num*100);
-      let point=(x100%100)+"";
+      let pp=1;
+      let points=Math.pow(10,pp);
+      let xK=Math.round(num*points);
+      let point=(xK%points)+"";
       
-      let dig=Math.floor(x100/100)+"";
-      return stringPadZero(dig,2)+"."+stringPadZero(point,2);
+      let dig=Math.floor(xK/points)+"";
+      return stringPadZero(dig,2)+"."+stringPadZero(point,pp);
     }
     
+    let mixPix=undefined;
 
-    let warnAudioPlay=true;
     let frame_counter = 0;
     let connection=undefined;
     let warnFrame=undefined;
-    let pixSize=5;
-    let xflip=false;
-    let rotateIdx=0;
+    let stillFrameCounter=0;
+    let stillHumanCounter=0;
+    let stillHumanTemp=0;
+    let TC_config={
+      warnAudioPlay:false,
+      pixSize:7,
+      xflip:false,
+      rotateIdx:0,
+      filterMode:0,
+      speedIdx:5,
+      tempCalibMult:36.4/30,
+      tempCalibOffset:0
+    }
+
+    function config_update_UI(config)
+    {
+
+      document.getElementById('filterMode_btn').innerText = "Filter:"+config.filterMode;
+      document.getElementById('sound_btn').innerText = "SOUND:"+(config.warnAudioPlay?"ON":"OFF");
+
+      
+      document.getElementById("speedIdx_slider").value = config.speedIdx;
+
+
+      
+      document.getElementById("input_calib_mult").value = config.tempCalibMult;
+      document.getElementById("input_calib_add").value = config.tempCalibOffset;
+    }    
+    
+    document.addEventListener('DOMContentLoaded', function() {
+      url_setDefault();
+      let input_IP_DOM=document.getElementById('input_IP');
+      let url = ls_getCamUrl();
+      if(url!==undefined && url.length >0)
+        input_IP_DOM.value = url;
+
+      {
+        let loadConfig = ls_getJson("TC_config");
+        if(loadConfig===undefined)loadConfig={};
+        TC_config={...TC_config,...loadConfig};
+        config_update_UI(TC_config);
+      }
+
+
+
+      var slider = document.getElementById("speedIdx_slider");
+
+      // Update the current slider value (each time you drag the slider handle)
+      slider.oninput = function() {
+        
+        // output.innerHTML = this.value;
+        
+        if(connection.readyState==WebSocket.OPEN)
+        {
+          let spidx=parseInt(this.value);
+          connection.send(JSON.stringify({speedIdx:spidx}));
+          TC_config.speedIdx=spidx;
+          ls_setJson("TC_config",TC_config);
+        }
+      }
+      var input_calib_mult = document.getElementById("input_calib_mult");
+      input_calib_mult.oninput = function() {
+        
+          let cmult=parseFloat(this.value);
+          TC_config.tempCalibMult=cmult;
+          ls_setJson("TC_config",TC_config);
+      }
+
+      
+      var input_calib_add = document.getElementById("input_calib_add");
+      input_calib_add.oninput = function() {
+        
+          let cadd=parseFloat(this.value);
+          TC_config.tempCalibOffset=cadd;
+          ls_setJson("TC_config",TC_config);
+      }
+    }, false);
+
     // Log messages from the server
     let onmessage = function (e) {
         if (e.data.length < 100) {
             return;
         }
         frame_counter += 1;
+        let Frame_RMSE=0;
+        let isFrameStill=true;
         const values_raw = new Int16Array(e.data);
+        if(mixPix===undefined)
+        {
+          mixPix= new Array(values_raw.length);
+          values_raw.forEach((mP,idx) => {
+            mixPix[idx]=1.0*mP;
+          });
+          stillFrameCounter=0;
+          
+        }
+        else
+        {
+          Frame_RMSE=0;
+          switch(TC_config.filterMode)
+          {
+            case 0:
+              
+              Frame_RMSE = Math.sqrt(
+                mixPix.reduce((s,v,idx)=>s+(v-values_raw[idx])*(v-values_raw[idx]),0)
+                  /mixPix.length);
 
-        const values=values_raw.map(v=>((v/100.0)*36.7/30));
+              values_raw.forEach((mP,idx) => {
+                mixPix[idx]=1.0*mP;
+              });
+              if(Frame_RMSE>55)isFrameStill=false;
+              break;
+            
+            case 1:
+              mixPix.forEach((mP,idx) => {
+                let diff = values_raw[idx]-mP;
+                if(diff<0)diff=-diff;
+                diff-=50;
+                let approachV=diff/100;
+                if(approachV>1)approachV=1;
+                if(approachV<0.2)approachV=0.2;
+                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+              
+              if(Frame_RMSE>20)isFrameStill=false;
+              break;
+            
+            case 2:
+              
+              mixPix.forEach((mP,idx) => {
+                if(values_raw[idx]>mP)
+                {
+                  mixPix[idx]=values_raw[idx];
+                  return;
+                }
+                let approachV=0.05;
+                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+
+              if(Frame_RMSE>5)isFrameStill=false;
+              break;
+
+            case 3:
+              
+              
+              let rmse = Math.sqrt(
+                mixPix.reduce((s,v,idx)=>
+                  s+(v-values_raw[idx])*(v-values_raw[idx]),0)/mixPix.length
+                  );
+              
+              rmse-=70;
+
+              rmse/=70;
+
+              if(rmse>1)rmse=1;
+              if(rmse<0.1)rmse=0.1;
+              let approachV=rmse;
+              mixPix.forEach((mP,idx) => {
+                let tmpap=approachV;
+                if(values_raw[idx]>mP)
+                {
+                  tmpap=1;
+                }
+                mixPix[idx]+=tmpap*(values_raw[idx]-mP);
+                
+                let newPixV=mP+tmpap*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mP)*(newPixV-mP);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+              
+              if(Frame_RMSE>17)isFrameStill=false;
+              break;
+          }
+        }
+
+
+        const values=mixPix.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
         const tempValues = interpolateData(values, 32);
         const sortedValues = values.slice().sort();
-        
+        // console.log(values);
         let avgHighTemp = 0;
         let avgLowTemp = 0;
         
@@ -191,6 +429,18 @@
         }
         avgHighTemp = avgHighTemp / highCount;
 
+        
+        if(isFrameStill)
+        {
+          if(avgHighTemp>35)stillHumanCounter++;
+          stillFrameCounter++;
+        }
+        else
+        { 
+          stillFrameCounter=0;
+          stillHumanCounter=0;
+        }
+
         avgLowTemp = 0;
 
         let lowCount=20;
@@ -199,11 +449,40 @@
         }
         avgLowTemp = avgLowTemp / lowCount;
         
-        document.getElementById('temperature').innerText = 
-          'High: ' + numberFormat(avgHighTemp) + ' C | Low: ' +  numberFormat(avgLowTemp)  + 
-          ' C \n AVG: ' + numberFormat(avgTemp) + ' C';
-    
 
+        if(stillHumanCounter>0)
+        {
+          stillHumanTemp+=(avgHighTemp-stillHumanTemp)/(stillHumanCounter);
+        }
+        else
+        {
+          stillHumanTemp=0;
+        }
+
+        if(stillHumanCounter>5 && TC_config.warnAudioPlay==true && stillHumanTemp>37.5)
+        {
+          if(warnFrame===undefined)
+          {
+            warnFrame=frame_counter;
+            warn_audio.play();
+          }
+        }
+        else if(frame_counter-warnFrame>40 && warnFrame!==undefined)
+        {
+          
+          if(warnFrame!==undefined)
+          {
+            warnFrame=undefined;
+            warn_audio.pause();
+          }
+        }
+        
+
+
+        document.getElementById('temperature').innerText = 
+          'SHC: '+ stillHumanCounter+'\n TEMP: '+ numberFormat(stillHumanTemp)+" C\n"+
+          'H: ' + numberFormat(avgHighTemp) + ' C | L: ' +  numberFormat(avgLowTemp)  + ' C\n'
+          'A: ' + numberFormat(avgTemp) + ' C';
         let high = 40;
         let low = 20;
 
@@ -211,18 +490,21 @@
         var c2_context = c2.getContext('2d');
         c2_context.font = "40pt Arial";
         let heatMapBarW=10;
-        switch(rotateIdx)
+        let W=((48*TC_config.pixSize)|0)+heatMapBarW;
+        let H=(64*TC_config.pixSize)|0;
+
+        switch(TC_config.rotateIdx)
         {
           case 0:
           case 2:
-            c2.height=(64*pixSize)|0;
-            c2.width=((48*pixSize)|0)+heatMapBarW;
+            c2.height=H;
+            c2.width=W;
           break;
           case 1:
           case 3:
 
-            c2.width=((64*pixSize)|0)+heatMapBarW;
-            c2.height=(48*pixSize)|0;
+            c2.width=H;
+            c2.height=W;
           break;
 
         }
@@ -230,27 +512,15 @@
         for (let i = 0; i < tempValues.length; i += 1) {
 
             let drawStroke=false;
+            
             if(tempValues[i]>37.5)
             {
               
-              if(warnFrame===undefined)
-              {
-                warnFrame=frame_counter;
-                if(warnAudioPlay)warn_audio.play();
-              }
               c2_context.strokeStyle = "#00FFFF";
               drawStroke=true;
             }
             else
             {
-              if(warnFrame!==undefined)
-              {
-                if(frame_counter-warnFrame>40)
-                {
-                  warnFrame=undefined;
-                  warn_audio.pause();
-                }
-              }
             }
             let value = (tempValues[i] - low) / (high - low);
             c2_context.fillStyle = heatMapColorforValue(value);
@@ -262,7 +532,7 @@
             let ypos = i%63;
             let xPos;
             let yPos;
-            switch(rotateIdx)
+            switch(TC_config.rotateIdx)
             {
               case 0:
                 xPos=xpos;
@@ -283,9 +553,9 @@
 
             }
             // console.log(xPos,yPos);
-            if(xflip==true)
+            if(TC_config.xflip==true)
             {
-              switch(rotateIdx)
+              switch(TC_config.rotateIdx)
               {
                 case 0:
                 case 2:
@@ -298,12 +568,12 @@
               }
             }
 
-            c2_context.fillRect(xPos*pixSize, yPos*pixSize, pixSize, pixSize);
+            c2_context.fillRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
             if(drawStroke)
-              c2_context.strokeRect(xPos*pixSize, yPos*pixSize, pixSize, pixSize);
+              c2_context.strokeRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
         }
 
-        let drawBlockH=5;
+        let drawBlockH=20;
         for (let i = 0; i < c2.height; i += drawBlockH)
         {
           
@@ -311,6 +581,12 @@
           c2_context.fillRect(c2.width-heatMapBarW, i, heatMapBarW, drawBlockH);
         }
         
+        for (let i = 0; i < c2.height; i += drawBlockH*5)
+        {
+          
+          c2_context.fillStyle = heatMapColorforValue((c2.height-i)/c2.height);
+          c2_context.fillRect(c2.width-heatMapBarW, i, heatMapBarW, drawBlockH);
+        }
         c2_context.fillStyle = "#FFF";
         c2_context.fillText(high, c2.width-10,20);
         c2_context.fillText(low, c2.width-10,c2.height-10);
@@ -332,12 +608,15 @@
 
       connection.binaryType = "arraybuffer";
       connection.onopen = function () {
-        connection.send('Ping'); // Send the message 'Ping' to the server
+        // connection.send('Ping'); // Send the message 'Ping' to the server
+        ls_setCamUrl(input_IP_DOM.value);
       };
       connection.onclose = function(event) {
         input_IP_DOM.disabled=
         start_btn_DOM.disabled=false;
         connection=undefined;
+        
+        warn_audio.pause();
       };
       // Log errors
       connection.onerror = function (error) {
@@ -345,6 +624,7 @@
         input_IP_DOM.disabled=
         start_btn_DOM.disabled=false;
         connection=undefined;
+        warn_audio.pause();
       };
       connection.onmessage=onmessage;
     }
@@ -358,23 +638,68 @@
       connection.close();
     }
 
-    function rotate() {
-      rotateIdx=(rotateIdx+1)%4;
-    }
+
+    
     function flipX() {
-      xflip=!xflip;
+      TC_config.xflip=!TC_config.xflip;
+      
+      ls_setJson("TC_config",TC_config);
     }
+
+    function rotate() {
+      TC_config.rotateIdx=(TC_config.rotateIdx+1)%4;
+      ls_setJson("TC_config",TC_config);
+    }
+
+    function filterMode_toggle() {
+      TC_config.filterMode=(TC_config.filterMode+1)%4;
+      config_update_UI(TC_config);
+      ls_setJson("TC_config",TC_config);
+    }
+
+    function SOUND_toggle()
+    {
+      TC_config.warnAudioPlay=!TC_config.warnAudioPlay;
+      warn_audio.pause();
+      config_update_UI(TC_config);
+      ls_setJson("TC_config",TC_config);
+
+      // if(connection.readyState==WebSocket.OPEN)
+      // {
+      //   if(TC_config.warnAudioPlay)
+      //     connection.send("{\"speedIdx\":5}");
+      //   else
+      //     connection.send("{\"speedIdx\":3}");
+
+      // }
+      
+    }
+
     </script>
 </head>
-<body>
-    <canvas id='myCanvas' height='480' width='640' style='border:1px solid #d3d3d3;'></canvas>
-    <p id='temperature'></p>
-    <button class="cButton" onclick='flipX()'>Flip X</button>
-    <button class="cButton" onclick='rotate()'>ROTATE</button>
-    <br/>
-    <input type="text" id="input_IP" name="input_IP" value="thermal.local:81">
-    <button class="cButton" onclick='ws_start()'  id="start_btn">START</button>
-    <br/>
-    <button  class="cButton" onclick='ws_stop()'  id="start_btn">STOP</button>
+<body class="fullFrame">
+    <canvas id='myCanvas' class="left" height='48' width='64' style='border:1px solid #d3d3d3;'></canvas>
+    <div class="right">
+      <p id='temperature'></p>
+      <button class="cButton" onclick='flipX()'>Flip X</button>
+      <button class="cButton" onclick='rotate()'>ROTATE</button>
+      <br/>
+      <button  class="cButton" onclick='SOUND_toggle()'  id="sound_btn">SOUND:OFF</button>
+      <button  class="cButton" onclick='filterMode_toggle()'  id="filterMode_btn">Filter:0</button>
+      <br/>
+      <button  class="cButton" onclick='ws_stop()'  id="stop_btn">STOP</button>
+      <button class="cButton" onclick='ws_start()'  id="start_btn">START</button>
+      <input type="text" id="input_IP" name="input_IP" value="thermal.local:81">
+      <button class="sButton" onclick='url_setDefault()'  id="setUrlDefault_btn">X</button>
+      v0.0.1
+      <br/>
+      SPEED:<input type="range" min="1" max="5" value="5" class="slider" id="speedIdx_slider">
+      <br/>
+      -CALIB-<br/>
+      
+      X<input id="input_calib_mult" type="number"  step="0.01" min="0" max="2">+<input id="input_calib_add" type="number"  step="0.01" min="-20" max="20">
+
+    </div>
 </body>
+
 </html>

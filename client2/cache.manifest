@@ -1,0 +1,10 @@
+CACHE MANIFEST
+#version1
+CACHE:
+index.html
+warningSFX.mp3
+
+FALLBACK:
+
+NETWORK:
+*
