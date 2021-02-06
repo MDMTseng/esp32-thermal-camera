@@ -236,7 +236,7 @@
     let stillHumanTemp=0;
     let TC_config={
       warnAudioPlay:false,
-      pixSize:7,
+      pixSize:3,
       xflip:false,
       rotateIdx:0,
       filterMode:0,
@@ -415,7 +415,7 @@
 
 
         const values=mixPix.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
-        const tempValues = interpolateData(values, 32);
+        const tempValues = values;
         const sortedValues = values.slice().sort();
         // console.log(values);
         let avgHighTemp = 0;
@@ -477,7 +477,8 @@
           }
         }
         
-
+        let img_W=32;
+        let img_H=24;
 
         document.getElementById('temperature').innerText = 
           'SHC: '+ stillHumanCounter+'\n TEMP: '+ numberFormat(stillHumanTemp)+" C\n"+
@@ -490,8 +491,8 @@
         var c2_context = c2.getContext('2d');
         c2_context.font = "40pt Arial";
         let heatMapBarW=10;
-        let W=((48*TC_config.pixSize)|0)+heatMapBarW;
-        let H=(64*TC_config.pixSize)|0;
+        let W=((img_H*TC_config.pixSize)|0)+heatMapBarW;
+        let H=(img_W*TC_config.pixSize)|0;
 
         switch(TC_config.rotateIdx)
         {
@@ -528,8 +529,8 @@
 
             
 
-            let xpos = (i/63)| 0;
-            let ypos = i%63;
+            let xpos = (i/img_W)| 0;
+            let ypos = i%img_W;
             let xPos;
             let yPos;
             switch(TC_config.rotateIdx)
@@ -540,15 +541,15 @@
               break;
               case 1:
                 xPos=ypos;
-                yPos=46-xpos;
+                yPos=img_H-xpos;
               break;
               case 2:
-                xPos=46-xpos;
-                yPos=62-ypos;
+                xPos=img_H-xpos;
+                yPos=img_W-ypos;
               break;
               case 3:
                 yPos=xpos;
-                xPos=62-ypos;
+                xPos=img_W-ypos;
               break;
 
             }
@@ -559,11 +560,11 @@
               {
                 case 0:
                 case 2:
-                  xPos=46-xPos;
+                  xPos=img_H-xPos;
                 break;
                 case 1:
                 case 3:
-                  xPos=62-xPos;
+                  xPos=img_W-xPos;
                 break;
               }
             }
