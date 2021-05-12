@@ -359,9 +359,9 @@ void MLX90640_CalculateTo(uint16_t *frameData, const paramsMLX90640 *params, flo
 
     for( int pixelNumber = 0; pixelNumber < 768; pixelNumber++)
     {
-        ilPattern = pixelNumber / 32 - (pixelNumber / 64) * 2; 
-        chessPattern = ilPattern ^ (pixelNumber - (pixelNumber/2)*2); 
-        conversionPattern = ((pixelNumber + 2) / 4 - (pixelNumber + 3) / 4 + (pixelNumber + 1) / 4 - pixelNumber / 4) * (1 - 2 * ilPattern);
+        ilPattern = (pixelNumber>>5) - ((pixelNumber>>6) <<1); 
+        chessPattern = ilPattern ^ (pixelNumber - ((pixelNumber>>1)<<1)); 
+        conversionPattern = ( ((pixelNumber + 2)>>2) - ((pixelNumber + 3)>>2) + ((pixelNumber + 1)>>2) - (pixelNumber>>2)) * (1 - 2 * ilPattern);
         
         if(mode == 0)
         {

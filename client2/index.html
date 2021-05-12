@@ -253,6 +253,7 @@
 
       
       document.getElementById("speedIdx_slider").value = config.speedIdx;
+      document.getElementById("pixSize_slider").value = config.pixSize;
 
 
       
@@ -291,6 +292,29 @@
           ls_setJson("TC_config",TC_config);
         }
       }
+
+
+      var ps_slider = document.getElementById("pixSize_slider");
+
+      // Update the current slider value (each time you drag the slider handle)
+      ps_slider.oninput = function() {
+        
+        // output.innerHTML = this.value;
+        
+        if(connection.readyState==WebSocket.OPEN)
+        {
+          let vi=parseInt(this.value);
+          connection.send(JSON.stringify({pixSize:vi}));
+          TC_config.pixSize=vi;
+          ls_setJson("TC_config",TC_config);
+        }
+      }
+
+
+
+
+
+
       var input_calib_mult = document.getElementById("input_calib_mult");
       input_calib_mult.oninput = function() {
         
@@ -695,6 +719,8 @@
       v0.0.1
       <br/>
       SPEED:<input type="range" min="1" max="5" value="5" class="slider" id="speedIdx_slider">
+      <br/>
+      SIZE :<input type="range" min="1" max="30" value="30" class="slider" id="pixSize_slider">
       <br/>
       -CALIB-<br/>
       
