@@ -83,7 +83,7 @@
 
 
     var warn_audio = new Audio('warningSFX.mp3');
-
+    var pass_audio = new Audio('passSFX.mp3');
     function heatMapColorforValue(value,low=0,middle=0.5,high=1){
       if(value>high)value=high;
       if(value<low)value=low;
@@ -663,15 +663,27 @@
             longStillFrame_HighestTemp=stillFrame_HighestTemp;
           }
           longStillFrameTime=time_ms;
-          if(TC_config.warnAudioPlay==true && longStillFrame_HighestTemp>NG_TEMP)
-            warn_audio.play();
+          if(TC_config.warnAudioPlay==true)
+          {
+            if(longStillFrame_HighestTemp>NG_TEMP)
+            {
+              warn_audio.play();
+              pass_audio.pause();
+            }
+            else
+              pass_audio.play();
+          }
+          
         }
 
-        if(time_ms-longStillFrameTime>5000 || (stillFrameCounter==0 && longStillFrame_HighestTemp<NG_TEMP))//over 5 secs
+        if(time_ms-longStillFrameTime>7000 || (time_ms-longStillFrameTime>3000 && longStillFrame_HighestTemp<NG_TEMP))//over 5 secs
         {
           longStillFrame_HighestTemp=undefined;
           longStillFrameTime=undefined;
           warn_audio.pause();
+          pass_audio.pause();
+          warn_audio.currentTime = 0;
+          pass_audio.currentTime = 0;
         }
 
         document.getElementById('temperature').innerText = 
@@ -901,6 +913,7 @@
     {
       TC_config.warnAudioPlay=!TC_config.warnAudioPlay;
       warn_audio.pause();
+      pass_audio.pause();
       config_update_UI(TC_config);
       ls_setJson("TC_config",TC_config);
 
