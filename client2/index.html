@@ -54,7 +54,7 @@
     </script>
     <script>
 
-
+    let _ignore_calib=false;
     function ls_setCamUrl(url)
     {
       return localStorage.setItem("ThermalCamUrl",url);
@@ -105,6 +105,23 @@
       var l = 10+50*(Math.sqrt(Math.sin(ratio*Math.PI)));
 
 
+      return "hsl(" + h + ","+s+"%,"+l+"%)";
+    }
+
+    function heatMapColor_HSL_array(ratio,heatMapArrayHSL=[[240,100,10],[120,100,50],[0,100,10]]){
+      // var h = ((ratio-0.5)*1.2)+0.5;
+      if(ratio>1)ratio=1;
+      if(ratio<0)ratio=0;
+      let idxF=(heatMapArrayHSL.length-1.001)*ratio;
+
+      let idx=Math.floor( idxF );
+      let idx_ratio=idxF-idx;
+      // console.log(idx,idx_ratio);
+      let a1=heatMapArrayHSL[idx];
+      let a2=heatMapArrayHSL[idx+1];
+      let h=a1[0]+(a2[0]-a1[0])*idx_ratio;
+      let s=a1[1]+(a2[1]-a1[1])*idx_ratio;
+      let l=a1[2]+(a2[2]-a1[2])*idx_ratio;
       return "hsl(" + h + ","+s+"%,"+l+"%)";
     }
 
@@ -230,10 +247,10 @@
 
     let frame_counter = 0;
     let connection=undefined;
-    let warnFrame=undefined;
+    let longStillFrameTime=undefined;
+    let longStillFrame_HighestTemp=0;
+    let stillFrame_HighestTemp=0;
     let stillFrameCounter=0;
-    let stillHumanCounter=0;
-    let stillHumanTemp=0;
     let TC_config={
       warnAudioPlay:false,
       pixSize:3,
@@ -332,7 +349,10 @@
           ls_setJson("TC_config",TC_config);
       }
     }, false);
+    
 
+    
+    let heatMapColor_HSL=[[240,100,10],[240,100,40],[120,100,80],[0,100,50],[0,100,90]];
     // Log messages from the server
     let onmessage = function (e) {
         if (e.data.length < 100) {
@@ -341,6 +361,10 @@
         frame_counter += 1;
         let Frame_RMSE=0;
         let isFrameStill=true;
+        let stillFrameThres=5;
+        var time_ms = new Date().getTime();
+
+        let NG_TEMP=37.5;
         const values_raw = new Int16Array(e.data);
         if(mixPix===undefined)
         {
@@ -373,9 +397,10 @@
                 let diff = values_raw[idx]-mP;
                 if(diff<0)diff=-diff;
                 diff-=50;
-                let approachV=diff/100;
-                if(approachV>1)approachV=1;
-                if(approachV<0.2)approachV=0.2;
+                let approachV=diff/150;
+                approachV*=approachV;
+                if(approachV>0.8)approachV=0.8;
+                if(approachV<0.1)approachV=0.1;
                 let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
                 Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
                 mixPix[idx]=newPixV;
@@ -437,86 +462,21 @@
           }
         }
 
-
-        const values=mixPix.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
-        const tempValues = values;
-        const sortedValues = values.slice().sort();
-        // console.log(values);
-        let avgHighTemp = 0;
-        let avgLowTemp = 0;
-        
-        let avgTemp = sortedValues.reduce((s,v)=>s+v,0)/sortedValues.length;
-
-        let highCount=4;
-        for (let w = sortedValues.length - 1; w > sortedValues.length - 1-highCount; w -= 1) {
-            avgHighTemp += sortedValues[w];
-        }
-        avgHighTemp = avgHighTemp / highCount;
-
-        
-        if(isFrameStill)
-        {
-          if(avgHighTemp>35)stillHumanCounter++;
-          stillFrameCounter++;
-        }
-        else
-        { 
-          stillFrameCounter=0;
-          stillHumanCounter=0;
-        }
-
-        avgLowTemp = 0;
-
-        let lowCount=20;
-        for (let w = 0; w < lowCount; w += 1) {
-            avgLowTemp += sortedValues[w+4];
-        }
-        avgLowTemp = avgLowTemp / lowCount;
         
 
-        if(stillHumanCounter>0)
-        {
-          stillHumanTemp+=(avgHighTemp-stillHumanTemp)/(stillHumanCounter);
-        }
-        else
-        {
-          stillHumanTemp=0;
-        }
-
-        if(stillHumanCounter>5 && TC_config.warnAudioPlay==true && stillHumanTemp>37.5)
-        {
-          if(warnFrame===undefined)
-          {
-            warnFrame=frame_counter;
-            warn_audio.play();
-          }
-        }
-        else if(frame_counter-warnFrame>40 && warnFrame!==undefined)
-        {
-          
-          if(warnFrame!==undefined)
-          {
-            warnFrame=undefined;
-            warn_audio.pause();
-          }
-        }
-        
         let img_W=32;
         let img_H=24;
 
-        document.getElementById('temperature').innerText = 
-          'SHC: '+ stillHumanCounter+'\n TEMP: '+ numberFormat(stillHumanTemp)+" C\n"+
-          'H: ' + numberFormat(avgHighTemp) + ' C | L: ' +  numberFormat(avgLowTemp)  + ' C\n'
-          'A: ' + numberFormat(avgTemp) + ' C';
-        let high = 40;
-        let low = 20;
+        const values=
+          (_ignore_calib==true)?mixPix.map(v=>(v/100.0)):mixPix.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
 
         var c2 = document.getElementById('myCanvas');
         var c2_context = c2.getContext('2d');
         c2_context.font = "40pt Arial";
         let heatMapBarW=10;
-        let W=((img_H*TC_config.pixSize)|0)+heatMapBarW;
-        let H=(img_W*TC_config.pixSize)|0;
+        let W=((img_W*TC_config.pixSize)|0)+heatMapBarW;
+        let H=(img_H*TC_config.pixSize)|0;
+
 
         switch(TC_config.rotateIdx)
         {
@@ -534,87 +494,342 @@
 
         }
 
-        for (let i = 0; i < tempValues.length; i += 1) {
+        
+        let mappedW=img_W;
+        let mappedH=img_H;
 
-            let drawStroke=false;
-            
-            if(tempValues[i]>37.5)
+        if(TC_config.rotateIdx%2==1)
+        {
+
+          mappedW=img_H;
+          mappedH=img_W;
+        }
+
+        let f_region_ratio_x=0.2;
+        let f_region_ratio_y=0.2;
+        let f_region={x:mappedW*f_region_ratio_x,
+            w:mappedW*(1-f_region_ratio_x*2),
+
+            y:mappedH*f_region_ratio_y,
+            h:mappedH*(1-f_region_ratio_y*2)};
+
+
+        let remappedValues=values.map((_,idx)=>{
+          
+
+          let ypos = (idx/mappedW)| 0;
+          let xpos = idx%mappedW;
+
+
+          if(TC_config.xflip==true)
+          {
+            xpos=mappedW-1-xpos;
+          }
+          
+          let srcX,srcY;
+          switch(TC_config.rotateIdx)
+          {
+            case 0:
+              srcX=xpos;
+              srcY=ypos;
+            break;
+            case 1:
+              srcY=img_H-1-xpos;
+              srcX=ypos;
+            break;
+            case 2:
+              srcX=img_W-1-xpos;
+              srcY=img_H-1-ypos;
+            break;
+            case 3:
+              srcY=xpos;
+              srcX=img_W-1-ypos;
+            break;
+
+          }
+          // console.log(xPos,yPos);
+
+          return values[srcX+srcY*img_W];
+        })
+
+        
+
+
+
+
+        let valuesInRegion = remappedValues.filter((v,i)=>{
+          
+          let yPos = (i/mappedW)| 0;//int div
+          let xPos = i%mappedW;
+          xPos-=f_region.x;
+          yPos-=f_region.y;
+          if(xPos>=0 && xPos<f_region.w && 
+          yPos>=0 && yPos<f_region.h)
+          {
+            return true
+          }
+
+          return false;
+        })
+        const sortedValues_inRegion = valuesInRegion.slice().sort();
+        // console.log(values);
+        let highestTemp = sortedValues_inRegion[sortedValues_inRegion.length-1];
+        let avgHighTemp = 0;
+        let avgLowTemp = 0;
+        
+        let avgTemp = sortedValues_inRegion.reduce((s,v)=>s+v,0)/sortedValues_inRegion.length;
+
+        {//Find avgHighTemp
+          avgHighTemp=0;
+          let tempDiff=1;
+          let hTemp=sortedValues_inRegion[sortedValues_inRegion.length-1-1];//get the 2nd high temp
+          let highCount=0;
+          for (let w = sortedValues_inRegion.length - 1; w > 0; w -= 1) {
+            if(sortedValues_inRegion[w]>hTemp-tempDiff)
             {
-              
-              c2_context.strokeStyle = "#00FFFF";
-              drawStroke=true;
+              avgHighTemp += sortedValues_inRegion[w];
+              highCount++;
             }
             else
-            {
-            }
-            let value = (tempValues[i] - low) / (high - low);
-            c2_context.fillStyle = heatMapColorforValue(value);
-            // c2_context.fillStyle = heatMapColorforValue2(tempValues[i],low,high);
+              break;
+          }
+          avgHighTemp = avgHighTemp / highCount;
+          // let hestTemp=sortedValues_inRegion[sortedValues_inRegion.length-1];
+          // if(avgHighTemp<hestTemp-5)//if the highest temp to exceptionally high > assign the hestTemp to it
+          // {
+          //   avgHighTemp=hestTemp;
+          // }
+        }
 
-            
 
-            let xpos = (i/img_W)| 0;
-            let ypos = i%img_W;
-            let xPos;
-            let yPos;
-            switch(TC_config.rotateIdx)
-            {
-              case 0:
-                xPos=xpos;
-                yPos= ypos;
-              break;
-              case 1:
-                xPos=ypos;
-                yPos=img_H-xpos;
-              break;
-              case 2:
-                xPos=img_H-xpos;
-                yPos=img_W-ypos;
-              break;
-              case 3:
-                yPos=xpos;
-                xPos=img_W-ypos;
-              break;
+        let highTempFillRate=sortedValues_inRegion.reduce(
+          (rv,v)=>(avgHighTemp-v)>5?rv:rv+1,0)/sortedValues_inRegion.length;
+        highTempFillRate/=0.5;
+        if(highTempFillRate>1)highTempFillRate=1;
+        // console.log(highTempFillRate)
+        
+        {//Find avgLowTemp
+          avgLowTemp = 0;
 
-            }
-            // console.log(xPos,yPos);
-            if(TC_config.xflip==true)
+          let lowCount=20;
+          for (let w = 0; w < lowCount; w += 1) {
+              avgLowTemp += sortedValues_inRegion[w+4];
+          }
+          avgLowTemp = avgLowTemp / lowCount;
+        }
+        let high = avgHighTemp;
+        let low = avgLowTemp;
+        if(high-low<10)
+        {
+          low=high-10;
+        }
+        if(high-low>30)
+        {
+          low=high-30;
+        }
+
+        if(highTempFillRate<1)
+        {
+          isFrameStill=false;
+        }
+        
+        if(isFrameStill)
+        {
+          stillFrameCounter++;
+        }
+        else
+        { 
+          stillFrameCounter=0;
+        }
+
+        if(stillFrameCounter==0)
+        {
+          stillFrame_HighestTemp=avgHighTemp;
+        }
+        else
+        {
+          if(stillFrame_HighestTemp<avgHighTemp)
+          {
+            stillFrame_HighestTemp=avgHighTemp;
+          }
+        }
+
+        
+          
+        if( stillFrameCounter>stillFrameThres)
+        {
+          if(longStillFrame_HighestTemp<stillFrame_HighestTemp || longStillFrame_HighestTemp==undefined)
+          {
+            longStillFrame_HighestTemp=stillFrame_HighestTemp;
+          }
+          longStillFrameTime=time_ms;
+          if(TC_config.warnAudioPlay==true && longStillFrame_HighestTemp>NG_TEMP)
+            warn_audio.play();
+        }
+
+        if(time_ms-longStillFrameTime>5000 || (stillFrameCounter==0 && longStillFrame_HighestTemp<NG_TEMP))//over 5 secs
+        {
+          longStillFrame_HighestTemp=undefined;
+          longStillFrameTime=undefined;
+          warn_audio.pause();
+        }
+
+        document.getElementById('temperature').innerText = 
+          'SFC: '+ stillFrameCounter+'\n TEMP: '+ numberFormat(stillFrame_HighestTemp)+" C\n"+
+          'H: ' + numberFormat(avgHighTemp) + ' C | L: ' +  numberFormat(avgLowTemp)  + ' C\n'
+          'A: ' + numberFormat(avgTemp) + ' C';
+
+        
+
+        function printText(ctx,text,x,y,fsize)
+        {
+          ctx.lineWidth = fsize/20;
+          ctx.font = 'bold '+fsize+'px Arial';
+          ctx.fillText(text, x, y);
+          ctx.strokeStyle = "#000";
+          ctx.strokeText(text, x, y);
+
+        }
+
+        let highestPtInfo=undefined;
+        remappedValues.forEach((v,i)=>{
+          let yPos = (i/mappedW)| 0;//int div
+          let xPos = i%mappedW;
+
+          let drawStroke=false;
+          c2_context.lineWidth = TC_config.pixSize/5;
+
+          if(v>avgHighTemp-0.5)
+          {
+            if(highestTemp==v)
             {
-              switch(TC_config.rotateIdx)
-              {
-                case 0:
-                case 2:
-                  xPos=img_H-xPos;
-                break;
-                case 1:
-                case 3:
-                  xPos=img_W-xPos;
-                break;
+              highestPtInfo={
+                v:v,
+                x:xPos,
+                y:yPos
               }
             }
+            c2_context.strokeStyle = "#66FFFF";
+            drawStroke=true;
+          }
+          if(frame_counter%2==0 && v>NG_TEMP)
+          {
+            c2_context.strokeStyle = "#FF0000";
+            drawStroke=true;
+          }
+          let ratio = (v - low) / (high - low);
+          // c2_context.fillStyle = heatMapColorforValue(ratio);
+          c2_context.fillStyle = heatMapColor_HSL_array(ratio,heatMapColor_HSL);
 
-            c2_context.fillRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
-            if(drawStroke)
-              c2_context.strokeRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
+          c2_context.fillRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
+          if(drawStroke)
+            c2_context.strokeRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
+
+        })
+
+        
+        if(highestPtInfo!==undefined)
+        {
+
+          c2_context.textAlign = "center";
+          c2_context.fillStyle = "#FFF";
+          let fsize=TC_config.pixSize;
+          let _x=(highestPtInfo.x+0.5)*TC_config.pixSize;
+          let _y=(highestPtInfo.y+1)*TC_config.pixSize;
+          printText(c2_context,highestPtInfo.v.toFixed(1),_x,_y,fsize);
         }
 
         let drawBlockH=20;
         for (let i = 0; i < c2.height; i += drawBlockH)
         {
-          
-          c2_context.fillStyle = heatMapColorforValue((c2.height-i)/c2.height);
+          let ratio = (c2.height-i)/c2.height;
+          c2_context.fillStyle = heatMapColor_HSL_array(ratio,heatMapColor_HSL);
           c2_context.fillRect(c2.width-heatMapBarW, i, heatMapBarW, drawBlockH);
         }
         
-        for (let i = 0; i < c2.height; i += drawBlockH*5)
         {
-          
-          c2_context.fillStyle = heatMapColorforValue((c2.height-i)/c2.height);
-          c2_context.fillRect(c2.width-heatMapBarW, i, heatMapBarW, drawBlockH);
+          let tempLabelCount=5;
+          c2_context.textAlign = "left";
+          c2_context.fillStyle = "#FFF";
+          let textSize=TC_config.pixSize;
+          for(let i=0;i<tempLabelCount;i++)
+          {
+            let temp=high+(low-high)*i/(tempLabelCount-1);
+            let y=20+(c2.height-10-20)*i/(tempLabelCount-1);
+            printText(c2_context,temp.toFixed(1),          c2.width-textSize*2,y,textSize);
+          }
         }
-        c2_context.fillStyle = "#FFF";
-        c2_context.fillText(high, c2.width-10,20);
-        c2_context.fillText(low, c2.width-10,c2.height-10);
+
+
+
+        c2_context.save();
+        c2_context.textAlign = "start";
+        let temp_text = "H:"+high.toFixed(2)+ " \nL:"+low.toFixed(2);
+        
+        printText(c2_context,temp_text,TC_config.pixSize, TC_config.pixSize*2,TC_config.pixSize*2);
+
+
+
+
+        if(stillFrame_HighestTemp>34)
+        {
+
+          c2_context.strokeRect(f_region.x*TC_config.pixSize, f_region.y*TC_config.pixSize, 
+          f_region.w*TC_config.pixSize,f_region.h*TC_config.pixSize);
+
+          let fillRatio=(highTempFillRate-0.3)/0.7;
+          if(fillRatio<0)fillRatio=0;
+          if(fillRatio>1)fillRatio=1;
+
+          if(fillRatio==0)
+          {
+            c2_context.fillStyle="rgba(255,0,0,0.8)"
+          }
+          else
+          {
+            c2_context.fillStyle="rgba(255,0,0,"+0.8*(1-fillRatio/2)+")";
+          }
+
+          c2_context.fillRect(f_region.x*TC_config.pixSize, f_region.y*TC_config.pixSize, 
+          f_region.w*TC_config.pixSize,f_region.h*TC_config.pixSize*(1-fillRatio));
+
+
+          if(fillRatio==1 && stillFrameCounter<stillFrameThres)
+          {
+
+            c2_context.textAlign = "center";
+            c2_context.fillStyle= "#FFFFFF";
+            let temp_text = "H:"+high.toFixed(2)+ " \nL:"+low.toFixed(2);
+            printText(c2_context,stillFrameThres-stillFrameCounter,
+            c2.width/2,c2.height/2,TC_config.pixSize*10);
+          }
+
+        }
+
+
+
+        if(longStillFrameTime!==undefined && longStillFrame_HighestTemp>34)
+        {
+          c2_context.textAlign = "center";
+
+          if(longStillFrame_HighestTemp>NG_TEMP)
+          {
+            c2_context.fillStyle= "#FF0000";
+            temp_text="NG("+longStillFrame_HighestTemp.toFixed(2)+")";
+          }
+          else
+          {
+            c2_context.fillStyle= "#00FF00";
+            temp_text="OK("+longStillFrame_HighestTemp.toFixed(2)+")";
+          }
+
+          let fsize=TC_config.pixSize*3;
+          let _x=c2.width/2;
+          let _y=c2.height/2;
+          printText(c2_context,temp_text,c2.width/2,c2.height/2,fsize);
+
+        }
+        c2_context.restore();
 
     };
     function ws_start()
@@ -700,6 +915,34 @@
       
     }
 
+    function calib_switch_onclick(ev)
+    {
+      _ignore_calib=ev.checked;
+    }
+
+
+
+    
+    function calib_2pt_calc_set()
+    {
+      let I_RAW_1=parseFloat(document.getElementById('I_RAW_1').value);
+      let O_MAP_1=parseFloat(document.getElementById('O_MAP_1').value);
+      let I_RAW_2=parseFloat(document.getElementById('I_RAW_2').value);
+      let O_MAP_2=parseFloat(document.getElementById('O_MAP_2').value);
+      if(I_RAW_1!=I_RAW_1 || O_MAP_1!=O_MAP_1 || I_RAW_2!=I_RAW_2 || O_MAP_2!=O_MAP_2)
+      {
+        return;
+      }
+      console.log(I_RAW_1,O_MAP_1,I_RAW_2,O_MAP_2);
+      let x = (O_MAP_2-O_MAP_1)/(I_RAW_2-I_RAW_1);
+      let b = O_MAP_1-(I_RAW_1*x);
+      
+      TC_config.tempCalibMult=x;
+      TC_config.tempCalibOffset=b;
+      ls_setJson("TC_config",TC_config);
+      config_update_UI(TC_config);
+
+    }
     </script>
 </head>
 <body class="fullFrame">
@@ -724,7 +967,15 @@
       <br/>
       -CALIB-<br/>
       
-      X<input id="input_calib_mult" type="number"  step="0.01" min="0" max="2">+<input id="input_calib_add" type="number"  step="0.01" min="-20" max="20">
+      <input id="calib_switch" type="checkbox" onclick="calib_switch_onclick(this);">
+      X<input id="input_calib_mult" type="number"  step="0.01">+<input id="input_calib_add" type="number" step="0.01">
+      <br/>
+      -----
+      <br/>
+      <input id="I_RAW_1" type="number"  step="0.01">  > <input id="O_MAP_1" type="number"  step="0.01">
+      <br/>
+      <input id="I_RAW_2" type="number"  step="0.01"> > <input id="O_MAP_2" type="number"  step="0.01">
+      <button  class="calib_2pt_calc_set" onclick='calib_2pt_calc_set()'  id="stop_btn">set</button>
 
     </div>
 </body>

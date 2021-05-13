@@ -39,10 +39,6 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 #define TA_SHIFT -64; // Default shift for MLX90640 in open air is 8
 static float mlx90640To[768];
 
-// Used to compress data to the client
-char positive[27] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-char negative[27] = "abcdefghijklmnopqrstuvwxyz";
-
 TaskHandle_t TaskA;
 /* this variable hold queue handle */
 xQueueHandle xQueue;
