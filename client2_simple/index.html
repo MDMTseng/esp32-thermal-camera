@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang='en'  manifest="cache.manifest">
+
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Document</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        .fullFrame {
+            width: 100%;
+            height: 100%;
+        }
+        .cButton {
+            width: 80px;
+            height: 30px;
+            margin:1px;
+        }
+
+        .sButton {
+            width: 10px;
+            height: 30px;
+            margin:0px;
+        }
+        #temperature {
+            padding: 5px;
+            font-size: 1.2em;
+            text-align: left;
+        }
+        .left {
+          float:left;
+        }
+        .right {
+          width: 100%;
+          height:100%;
+        }
+    </style>
+
+    <script>
+      // // Register the service worker
+      // if ('serviceWorker' in navigator) {
+      //   navigator.serviceWorker.register('./service-worker.js').then(function(registration) {
+      //     // Registration was successful
+      //     console.log('ServiceWorker registration successful with scope: ', registration.scope);
+      // }).catch(function(err) {
+      //     // registration failed :(
+      //       console.log('ServiceWorker registration failed: ', err);
+      //     });
+      // }
+    </script>
+    <script type="application/javascript">
+
+    let _ignore_calib=false;
+    function ls_setCamUrl(url)
+    {
+      return localStorage.setItem("ThermalCamUrl",url);
+    }
+    function ls_getCamUrl()
+    {
+      return localStorage.getItem("ThermalCamUrl");
+    }
+
+
+    
+    function ls_setJson(key,data)
+    {
+      return localStorage.setItem(key,JSON.stringify(data));
+    }
+    function ls_getJson(key)
+    {
+      let str = localStorage.getItem(key);
+      if(str===undefined || str===null)return undefined;
+      try {
+        return JSON.parse(str);
+      } catch (e) {
+      }
+      return undefined;
+    }
+
+
+    var warn_audio = new Audio('warningSFX.mp3');
+    function heatMapColorforValue(value,low=0,middle=0.5,high=1){
+      if(value>high)value=high;
+      if(value<low)value=low;
+      var ratio;
+      if(value<middle)
+        ratio = 0.5*(value-low)/(middle-low);
+      else
+        ratio = 0.5+0.5*(value-middle)/(high-middle);
+
+      // var h = ((ratio-0.5)*1.2)+0.5;
+      // if(h>1)h=1;
+      // if(h<0)h=0;
+      var h = ((0.5-ratio)*1.2)+0.5;
+      if(h>1)h=1;
+      if(h<0)h=0;
+
+      h=h*240;
+      var s = 100;
+      var l = 10+50*(Math.sqrt(Math.sin(ratio*Math.PI)));
+
+
+      return "hsl(" + h + ","+s+"%,"+l+"%)";
+    }
+
+    function heatMapColor_HSL_array(ratio,heatMapArrayHSL=[[240,100,10],[120,100,50],[0,100,10]]){
+      // var h = ((ratio-0.5)*1.2)+0.5;
+      if(ratio>1)ratio=1;
+      if(ratio<0)ratio=0;
+      let idxF=(heatMapArrayHSL.length-1.001)*ratio;
+
+      let idx=Math.floor( idxF );
+      let idx_ratio=idxF-idx;
+      // console.log(idx,idx_ratio);
+      let a1=heatMapArrayHSL[idx];
+      let a2=heatMapArrayHSL[idx+1];
+      let h=a1[0]+(a2[0]-a1[0])*idx_ratio;
+      let s=a1[1]+(a2[1]-a1[1])*idx_ratio;
+      let l=a1[2]+(a2[2]-a1[2])*idx_ratio;
+      return "hsl(" + h + ","+s+"%,"+l+"%)";
+    }
+
+    function url_setDefault()
+    {
+      
+      let input_IP_DOM=document.getElementById('input_IP');
+      input_IP_DOM.value="thermal.local:81";
+    }
+
+
+    function heatMapColorforValue2(value, avgLowTemp, avgHighTemp) {
+        if(value>avgHighTemp)value=avgHighTemp;
+        if(value<avgLowTemp)value=avgLowTemp;
+        let h;
+        let l = 50;
+        let s;
+        let a = 1;
+        let threshold = 38;
+        let diff = avgHighTemp - avgLowTemp;
+        if (diff < 4) {
+            if (avgHighTemp < 75) {
+                threshold = 100 - (diff * 4);
+            } else if(avgHighTemp > 75) {
+                threshold = (diff * 4);
+            }
+        }
+        if (value < threshold) {//35) {
+            h = 200 + (1.0 - (value / threshold)) * 30;
+            l = 50 + (value / threshold) * 30;
+            s = 60 + (value / threshold) * 35;
+            a = 0.8;
+        } else {
+            h = 10 + 40 * (1.0 - ((value - threshold) / threshold));
+            l = 40 + 50 * (1.0 - ((value - threshold) / threshold));//50 * (1.0 - ((value - threshold) / threshold)) + 50;
+            s = 98;
+            a = 0.95;
+        }
+        return `hsla( ${h}, ${s}%, ${l}%, ${a})`;
+    }
+
+    function percentToRGB(percent) {
+        if (percent === 100) {
+            percent = 99
+        }
+        var r, g, b;
+        var result = '';
+        if (percent < 50) {
+            // blue to yellow
+            r = Math.floor(255 * ((percent - 30) / 20));//Math.floor(255 * ((50 - percent % 50) / 100));
+            g = Math.floor(180 * ((percent) / 50));//Math.floor(80 * ((65 - percent) / 50));;//Math.floor(200 * (percent / 50) - 50);//Math.floor(255 * (percent / 100));//Math.floor(255 * (percent / 50));;
+            b = Math.floor(255 * ((75 - percent) / 50));
+            result = 'rgba(' + r + ',' + g + ',' + b + ', 0.9)';
+        } else {
+            // yellow to red
+            r = 255;
+            g = Math.floor(200 * ((50 - percent % 50) / 50));
+            b = Math.floor(100 * ((50 - percent % 50) / 50));//0;
+            result = 'rgba(' + r + ',' + g + ',' + b + ', 0.9)';
+        }
+        return result;
+    }
+
+    function interpolateData(input, rowLength) {
+        const output = [];
+        let rowNum = 1;
+        for (let n = 0; n < input.length; n += 1) {
+            //output.push(n % rowLength);
+            if (n % rowLength === 0) {
+                output.push((input[n] + input[n + 1]) / 2)            
+            } else if (n > 0) {
+                output.push((input[n] + input[n - 1]) / 2)
+            } else {
+                output.push(input[n]);
+            }
+            
+            if ((n + 1) % rowLength === 0) {
+                if (input.length - n > rowLength) {
+                    for (let r = 1; r <= rowLength * 2 - 1; r++) {
+                        const roundedA = ((rowNum - 1) * rowLength) + Math.floor((r - 1) / 2);
+                        const roundedB = ((rowNum - 1) * rowLength) + Math.floor((r - 1) / 2);
+                        const topA = input[roundedA];
+                        const topB = input[roundedB];
+                        const roundedC = (rowNum * rowLength) + Math.floor((r - 1) / 2);
+                        const roundedD = (rowNum * rowLength) + Math.floor((r - 1) / 2);
+                        const bottomA = input[roundedC];
+                        const bottomB = input[roundedD];
+                        //output.push(0);
+                        output.push((topA + topB + bottomA + bottomB) / 4);
+                    }
+                    rowNum += 1;
+                }
+                // Do nothing
+            } else {
+                //output.push(0);
+                output.push((input[n] + input[n + 1]) / 2)
+            }
+        }
+        return output;
+    }
+
+    function stringPadZero(str,zeros)
+    {
+      while(str.length<zeros)
+      {
+        str="0"+str;
+      }
+      return str;
+    }
+
+    function numberFormat(num)
+    {
+      let pp=1;
+      let points=Math.pow(10,pp);
+      let xK=Math.round(num*points);
+      let point=(xK%points)+"";
+      
+      let dig=Math.floor(xK/points)+"";
+      return stringPadZero(dig,2)+"."+stringPadZero(point,pp);
+    }
+    
+    let mixPix=undefined;
+
+    let frame_counter = 0;
+    let connection=undefined;
+    let longStillFrameTime=undefined;
+
+    let NG_counter = 0;
+
+    let longStillFrame_HighestTemp=0;
+    let stillFrame_HighestTemp=0;
+    let stillFrameCounter=0;
+    let TC_config={
+      warnAudioPlay:false,
+      pixSize:3,
+      xflip:false,
+      rotateIdx:0,
+      filterMode:0,
+      speedIdx:5,
+      tempCalibMult:36.4/30,
+      tempCalibOffset:0
+    }
+
+    function config_update_UI(config)
+    {
+
+      document.getElementById('filterMode_btn').innerText = "Filter:"+config.filterMode;
+      document.getElementById('sound_btn').innerText = "SOUND:"+(config.warnAudioPlay?"ON":"OFF");
+
+      
+      document.getElementById("speedIdx_slider").value = config.speedIdx;
+      document.getElementById("pixSize_slider").value = config.pixSize;
+
+
+      
+      document.getElementById("input_calib_mult").value = config.tempCalibMult;
+      document.getElementById("input_calib_add").value = config.tempCalibOffset;
+    }    
+    
+    document.addEventListener('DOMContentLoaded', function() {
+      url_setDefault();
+      let input_IP_DOM=document.getElementById('input_IP');
+      let url = ls_getCamUrl();
+      if(url!==undefined && url.length >0)
+        input_IP_DOM.value = url;
+
+      {
+        let loadConfig = ls_getJson("TC_config");
+        if(loadConfig===undefined)loadConfig={};
+        TC_config={...TC_config,...loadConfig};
+        config_update_UI(TC_config);
+      }
+
+
+
+      var slider = document.getElementById("speedIdx_slider");
+
+      // Update the current slider value (each time you drag the slider handle)
+      slider.oninput = function() {
+        
+        // output.innerHTML = this.value;
+        
+        if(connection.readyState==WebSocket.OPEN)
+        {
+          let spidx=parseInt(this.value);
+          connection.send(JSON.stringify({speedIdx:spidx}));
+          TC_config.speedIdx=spidx;
+          ls_setJson("TC_config",TC_config);
+        }
+      }
+
+
+      var ps_slider = document.getElementById("pixSize_slider");
+
+      // Update the current slider value (each time you drag the slider handle)
+      ps_slider.oninput = function() {
+        
+        // output.innerHTML = this.value;
+        
+        if(connection.readyState==WebSocket.OPEN)
+        {
+          let vi=parseInt(this.value);
+          connection.send(JSON.stringify({pixSize:vi}));
+          TC_config.pixSize=vi;
+          ls_setJson("TC_config",TC_config);
+        }
+      }
+
+
+
+
+
+
+      var input_calib_mult = document.getElementById("input_calib_mult");
+      input_calib_mult.oninput = function() {
+        
+          let cmult=parseFloat(this.value);
+          TC_config.tempCalibMult=cmult;
+          ls_setJson("TC_config",TC_config);
+      }
+
+      
+      var input_calib_add = document.getElementById("input_calib_add");
+      input_calib_add.oninput = function() {
+        
+          let cadd=parseFloat(this.value);
+          TC_config.tempCalibOffset=cadd;
+          ls_setJson("TC_config",TC_config);
+      }
+    }, false);
+    
+
+    
+    let heatMapColor_HSL=[[240,100,10],[240,100,40],[120,100,80],[0,100,50],[0,100,90]];
+
+
+
+    let sm_ev={
+      NA:"NA",
+      OK:"OK",
+      NG:"NG",
+    }
+    let sm_state={
+      INIT:"INIT",
+      NORMAL:"NORMAL",
+      STABLIZE:"STABLIZE",
+      INSP_OK:"INSP_OK",
+      INSP_NG:"INSP_NG",
+      RESET_COUNT_DOWN:"RESET_COUNT_DOWN",
+      LOW_POW_STATE:"LOW_POW_STATE",
+    }
+    let sm_cur_state=sm_state.INIT;
+
+    // Log messages from the server
+    let onmessage = function (e) {
+      // var time_ms_start = new Date().getTime();
+      onmessage_imp(e);
+      // var time_ms_end = new Date().getTime();
+      // console.log("duration:",time_ms_end-time_ms_start);
+    }
+    
+    let NG_TEMP_highest_temp=undefined;
+    let onmessage_imp=function (e) {
+        if (e.data.length < 100) {
+            return;
+        }
+        values_raw = new Int16Array(e.data);
+
+
+        let img_W=32;
+        let img_H=24;
+
+        var c2 = document.getElementById('myCanvas');
+        var c2_context = c2.getContext('2d');
+        c2_context.font = "40pt Arial";
+
+
+        let heatMapBarW=10;
+        let W=((img_W*TC_config.pixSize)|0);
+        let H=(img_H*TC_config.pixSize)|0;
+        switch(TC_config.rotateIdx)
+        {
+          case 0:
+          case 2:
+            c2.height=H;
+            c2.width=W+heatMapBarW;
+          break;
+          case 1:
+          case 3:
+
+            c2.width=H+heatMapBarW;
+            c2.height=W;
+          break;
+
+        }
+        let mappedW=img_W;
+        let mappedH=img_H;
+
+        if(TC_config.rotateIdx%2==1)
+        {
+
+          mappedW=img_H;
+          mappedH=img_W;
+        }
+
+        
+        
+        let indexMap=values_raw.map((_,idx)=>{
+          
+
+          let ypos = (idx/mappedW)| 0;
+          let xpos = idx%mappedW;
+
+
+          if(TC_config.xflip==true)
+          {
+            xpos=mappedW-1-xpos;
+          }
+          
+          let srcX,srcY;
+          switch(TC_config.rotateIdx)
+          {
+            case 0:
+              srcX=xpos;
+              srcY=ypos;
+            break;
+            case 1:
+              srcY=img_H-1-xpos;
+              srcX=ypos;
+            break;
+            case 2:
+              srcX=img_W-1-xpos;
+              srcY=img_H-1-ypos;
+            break;
+            case 3:
+              srcY=xpos;
+              srcX=img_W-1-ypos;
+            break;
+
+          }
+          // console.log(xPos,yPos);
+
+          return srcX+srcY*img_W;
+        })
+
+        
+        
+        values_raw=indexMap.map((map_idx,c_idx)=>{
+          return values_raw[map_idx];
+        })
+
+
+        values_raw=
+        (_ignore_calib==true)?
+          values_raw.map(v=>(v/100.0)):
+          values_raw.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
+
+        let f_region_ratio_x=0.25;
+        let f_region_ratio_y=0.25;
+        let f_region={x:mappedW*f_region_ratio_x,
+            w:mappedW*(1-f_region_ratio_x*2),
+
+            y:mappedH*f_region_ratio_y,
+            h:mappedH*(1-f_region_ratio_y*2)};
+
+
+
+        let filter_data_in_region=(v,i)=>{
+          
+          let yPos = (i/mappedW)| 0;//int div
+          let xPos = i%mappedW;
+          xPos-=f_region.x;
+          yPos-=f_region.y;
+          if(xPos>=0 && xPos<f_region.w && 
+          yPos>=0 && yPos<f_region.h)
+          {
+            return true
+          }
+
+          return false;
+        }
+
+
+
+
+
+
+        let stateInfo={};
+        frame_counter += 1;
+        let Frame_RMSE=0;
+        let isFrameStill=true;
+        var time_ms = new Date().getTime();
+
+        let NG_TEMP=37.5;
+        let NG_TEMP_FrameThres=3;
+        let NG_TEMP_COOL_DOWN=15;
+
+
+        let bk_mixPix;//copy
+        if(mixPix===undefined)
+        {
+          mixPix= new Array(values_raw.length);
+          values_raw.forEach((mP,idx) => {
+            mixPix[idx]=1.0*mP;
+          });
+          stillFrameCounter=0;
+          bk_mixPix=mixPix;
+        }
+        else
+        {
+          Frame_RMSE=0;
+          bk_mixPix=mixPix.slice();
+
+          switch(TC_config.filterMode)
+          {
+            case 0:
+              
+              Frame_RMSE = Math.sqrt(
+                mixPix.reduce((s,v,idx)=>s+(v-values_raw[idx])*(v-values_raw[idx]),0)
+                  /mixPix.length);
+
+              values_raw.forEach((mP,idx) => {
+                mixPix[idx]=1.0*mP;
+              });
+              if(Frame_RMSE>55)isFrameStill=false;
+              break;
+            
+            case 1:
+              mixPix.forEach((mP,idx) => {
+                let diff = values_raw[idx]-mP;
+                if(diff<0)diff=-diff;
+                diff-=0.5;
+                if(diff<0)diff=-diff;
+                let approachV=diff/3;
+                approachV*=approachV;
+                if(approachV>0.8)approachV=0.8;
+                if(approachV<0.1)approachV=0.1;
+                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+              
+              if(Frame_RMSE>0.4)isFrameStill=false;
+              break;
+            
+            case 2:
+              
+              mixPix.forEach((mP,idx) => {
+                if(values_raw[idx]>mP)
+                {
+                  mixPix[idx]=values_raw[idx];
+                  return;
+                }
+                let approachV=0.05;
+                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+
+              if(Frame_RMSE>0.05)isFrameStill=false;
+              break;
+
+            case 3:
+              
+              
+              let rmse = Math.sqrt(
+                mixPix.reduce((s,v,idx)=>
+                  s+(v-values_raw[idx])*(v-values_raw[idx]),0)/mixPix.length
+                  );
+              
+              rmse-=70;
+
+              rmse/=70;
+
+              if(rmse>1)rmse=1;
+              if(rmse<0.1)rmse=0.1;
+              let approachV=rmse;
+              mixPix.forEach((mP,idx) => {
+                let tmpap=approachV;
+                if(values_raw[idx]>mP)
+                {
+                  tmpap=1;
+                }
+                mixPix[idx]+=tmpap*(values_raw[idx]-mP);
+                
+                let newPixV=mP+tmpap*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mP)*(newPixV-mP);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+              
+              if(Frame_RMSE>0.17)isFrameStill=false;
+              break;
+          }
+        }
+
+        Frame_RMSE =bk_mixPix
+          .map((v,i)=>mixPix[i]-v)//diff
+          .filter(filter_data_in_region)//find only in region
+          .reduce((s,v)=>[s[0]+v*v,s[1]+1],[0,0])//find diff energy
+
+        Frame_RMSE=Math.sqrt(Frame_RMSE[0]/Frame_RMSE[1])
+
+        isFrameStill=true;
+        if(Frame_RMSE>0.4)isFrameStill=false;
+        // console.log("Frame_RMSE:",Frame_RMSE," isFrameStill:",isFrameStill);
+
+
+
+        stateInfo.Frame_RMSE=Frame_RMSE;
+        stateInfo.isFrameStill=isFrameStill;
+        stateInfo.time_ms=time_ms;
+        stateInfo.NG_TEMP=NG_TEMP;
+
+
+        let valuesInRegion = mixPix.filter(filter_data_in_region)
+        const sortedValues_inRegion = valuesInRegion.slice().sort();
+        // console.log(values);
+        let highestTemp = sortedValues_inRegion[sortedValues_inRegion.length-1];
+        let avgHighTemp = 0;
+        let avgLowTemp = 0;
+        
+        let avgTemp = sortedValues_inRegion.reduce((s,v)=>s+v,0)/sortedValues_inRegion.length;
+
+        {//Find avgHighTemp
+          avgHighTemp=0;
+          let tempDiff=1;
+          let hTemp=sortedValues_inRegion[sortedValues_inRegion.length-1-1];//get the 2nd high temp
+          let highCount=0;
+          for (let w = sortedValues_inRegion.length - 1; w > 0; w -= 1) {
+            if(sortedValues_inRegion[w]>hTemp-tempDiff)
+            {
+              avgHighTemp += sortedValues_inRegion[w];
+              highCount++;
+            }
+            else
+              break;
+          }
+          avgHighTemp = avgHighTemp / highCount;
+          // let hestTemp=sortedValues_inRegion[sortedValues_inRegion.length-1];
+          // if(avgHighTemp<hestTemp-5)//if the highest temp to exceptionally high > assign the hestTemp to it
+          // {
+          //   avgHighTemp=hestTemp;
+          // }
+        }
+
+        {//Find avgLowTemp
+          avgLowTemp = 0;
+
+          let lowCount=20;
+          for (let w = 0; w < lowCount; w += 1) {
+              avgLowTemp += sortedValues_inRegion[w+4];
+          }
+          avgLowTemp = avgLowTemp / lowCount;
+        }
+
+        
+        if(avgHighTemp>NG_TEMP)
+        {
+          if(NG_counter<NG_TEMP_COOL_DOWN)
+            NG_counter=NG_TEMP_COOL_DOWN;
+          NG_counter++;
+        }
+        else if(NG_counter>0)
+        {
+          if(NG_counter>NG_TEMP_COOL_DOWN*2)NG_counter=NG_TEMP_COOL_DOWN*2;
+          NG_counter--;
+        }
+          
+        console.log(avgHighTemp,NG_TEMP_highest_temp,NG_counter);
+        if( NG_counter>NG_TEMP_FrameThres)
+        {
+          if((NG_TEMP_highest_temp===undefined) || (NG_TEMP_highest_temp<avgHighTemp))
+            NG_TEMP_highest_temp=avgHighTemp;
+          warn_audio.play();
+          
+        }else
+        {
+          NG_TEMP_highest_temp=undefined;
+          warn_audio.pause();
+          warn_audio.currentTime = 0;
+        }
+        // document.getElementById('temperature').innerText = 
+        //   'SFC: '+ stillFrameCounter+'\n TEMP: '+ numberFormat(stillFrame_HighestTemp)+" C\n"+
+        //   'H: ' + numberFormat(avgHighTemp) + ' C | L: ' +  numberFormat(avgLowTemp)  + ' C\n'
+        //   'A: ' + numberFormat(avgTemp) + ' C';
+
+        
+
+        function printText(ctx,text,x,y,fsize)
+        {
+          ctx.lineWidth = fsize/20;
+          ctx.font = 'bold '+fsize+'px Arial';
+          ctx.fillText(text, x, y);
+          ctx.strokeStyle = "#000";
+          ctx.strokeText(text, x, y);
+
+        }
+        let hm_high = avgHighTemp;
+        let hm_low = avgLowTemp;
+        if(hm_high<35)hm_high=35;
+        if(hm_high-hm_low<10)
+        {
+          hm_low=hm_high-10;
+        }
+        if(hm_high-hm_low>20)
+        {
+          hm_low=hm_high-20;
+        }
+
+        let highestPtInfo=undefined;
+        mixPix.forEach((v,i)=>{
+          let yPos = (i/mappedW)| 0;//int div
+          let xPos = i%mappedW;
+
+          let drawStroke=false;
+          c2_context.lineWidth = TC_config.pixSize/5;
+
+          if(v>avgHighTemp-0.5)
+          {
+            if(highestTemp==v)
+            {
+              highestPtInfo={
+                v:v,
+                x:xPos,
+                y:yPos
+              }
+            }
+            c2_context.strokeStyle = "#66FFFF";
+            drawStroke=true;
+          }
+          if(frame_counter%2==0 && v>NG_TEMP)
+          {
+            c2_context.strokeStyle = "#FF0000";
+            drawStroke=true;
+          }
+          
+          let ratio = (v - hm_low) / (hm_high - hm_low);
+          // c2_context.fillStyle = heatMapColorforValue(ratio);
+          c2_context.fillStyle = heatMapColor_HSL_array(ratio,heatMapColor_HSL);
+
+          c2_context.fillRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
+          if(drawStroke)
+            c2_context.strokeRect(xPos*TC_config.pixSize, yPos*TC_config.pixSize, TC_config.pixSize, TC_config.pixSize);
+
+        })
+
+        
+        if(highestPtInfo!==undefined)
+        {
+
+          c2_context.textAlign = "center";
+          c2_context.fillStyle = "#FFF";
+          let fsize=TC_config.pixSize;
+          let _x=(highestPtInfo.x+0.5)*TC_config.pixSize;
+          let _y=(highestPtInfo.y+1)*TC_config.pixSize;
+          printText(c2_context,highestPtInfo.v.toFixed(1),_x,_y,fsize);
+        }
+
+        let drawBlockH=20;
+        for (let i = 0; i < c2.height; i += drawBlockH)
+        {
+          let ratio = (c2.height-i)/c2.height;
+          c2_context.fillStyle = heatMapColor_HSL_array(ratio,heatMapColor_HSL);
+          c2_context.fillRect(c2.width-heatMapBarW, i, heatMapBarW, drawBlockH);
+        }
+        
+        {
+          let tempLabelCount=5;
+          c2_context.textAlign = "left";
+          c2_context.fillStyle = "#FFF";
+          let textSize=TC_config.pixSize;
+          for(let i=0;i<tempLabelCount;i++)
+          {
+            let temp=hm_high+(hm_low-hm_high)*i/(tempLabelCount-1);
+            let y=20+(c2.height-10-20)*i/(tempLabelCount-1);
+            printText(c2_context,temp.toFixed(1),          c2.width-textSize*2,y,textSize);
+          }
+        }
+
+
+
+        c2_context.save();
+        c2_context.textAlign = "start";
+        let temp_text = "H:"+avgHighTemp.toFixed(2)+ " \nL:"+avgLowTemp.toFixed(2);
+        
+        printText(c2_context,temp_text,TC_config.pixSize, TC_config.pixSize*2,TC_config.pixSize*2);
+
+
+
+        
+        c2_context.strokeRect(f_region.x*TC_config.pixSize, f_region.y*TC_config.pixSize, 
+          f_region.w*TC_config.pixSize,f_region.h*TC_config.pixSize);
+       
+
+        if(NG_TEMP_highest_temp!==undefined)
+        {
+          c2_context.textAlign = "center";
+
+          {
+            c2_context.fillStyle= "#FF0000";
+            temp_text="NG("+NG_TEMP_highest_temp.toFixed(2)+")";
+          }
+          let fsize=TC_config.pixSize*3;
+          let _x=c2.width/2;
+          let _y=c2.height/2;
+          printText(c2_context,temp_text,c2.width/2,c2.height/2,fsize);
+
+        }
+        c2_context.restore();
+
+    };
+    function ws_start()
+    {
+      if(connection!==undefined)
+      {
+        ws_stop();
+      }
+      let input_IP_DOM=document.getElementById('input_IP');
+      let start_btn_DOM=document.getElementById('start_btn');
+      input_IP_DOM.disabled=true;
+      start_btn_DOM.disabled=true;
+      let url = 'ws://'+input_IP_DOM.value;
+
+      connection= new WebSocket(url);
+
+      connection.binaryType = "arraybuffer";
+      connection.onopen = function () {
+        // connection.send('Ping'); // Send the message 'Ping' to the server
+        ls_setCamUrl(input_IP_DOM.value);
+      };
+      connection.onclose = function(event) {
+        input_IP_DOM.disabled=
+        start_btn_DOM.disabled=false;
+        connection=undefined;
+        
+        warn_audio.pause();
+      };
+      // Log errors
+      connection.onerror = function (error) {
+        console.log('WebSocket Error ' + error);
+        input_IP_DOM.disabled=
+        start_btn_DOM.disabled=false;
+        connection=undefined;
+        warn_audio.pause();
+      };
+      connection.onmessage=onmessage;
+    }
+    function ws_stop()
+    {
+      
+      if(connection==undefined)
+      {
+        return;
+      }
+      connection.close();
+    }
+
+
+    
+    function flipX() {
+      TC_config.xflip=!TC_config.xflip;
+      
+      ls_setJson("TC_config",TC_config);
+    }
+
+    function rotate() {
+      TC_config.rotateIdx=(TC_config.rotateIdx+1)%4;
+      ls_setJson("TC_config",TC_config);
+    }
+
+    function filterMode_toggle() {
+      TC_config.filterMode=(TC_config.filterMode+1)%4;
+      config_update_UI(TC_config);
+      ls_setJson("TC_config",TC_config);
+    }
+
+    function SOUND_toggle()
+    {
+      TC_config.warnAudioPlay=!TC_config.warnAudioPlay;
+      warn_audio.pause();
+      config_update_UI(TC_config);
+      ls_setJson("TC_config",TC_config);
+
+      // if(connection.readyState==WebSocket.OPEN)
+      // {
+      //   if(TC_config.warnAudioPlay)
+      //     connection.send("{\"speedIdx\":5}");
+      //   else
+      //     connection.send("{\"speedIdx\":3}");
+
+      // }
+      
+    }
+
+    function calib_switch_onclick(ev)
+    {
+      _ignore_calib=ev.checked;
+    }
+
+
+
+    
+    function calib_2pt_calc_set()
+    {
+      let I_RAW_1=parseFloat(document.getElementById('I_RAW_1').value);
+      let O_MAP_1=parseFloat(document.getElementById('O_MAP_1').value);
+      let I_RAW_2=parseFloat(document.getElementById('I_RAW_2').value);
+      let O_MAP_2=parseFloat(document.getElementById('O_MAP_2').value);
+      if(I_RAW_1!=I_RAW_1 || O_MAP_1!=O_MAP_1 || I_RAW_2!=I_RAW_2 || O_MAP_2!=O_MAP_2)
+      {
+        return;
+      }
+      console.log(I_RAW_1,O_MAP_1,I_RAW_2,O_MAP_2);
+      let x = (O_MAP_2-O_MAP_1)/(I_RAW_2-I_RAW_1);
+      let b = O_MAP_1-(I_RAW_1*x);
+      
+      TC_config.tempCalibMult=x;
+      TC_config.tempCalibOffset=b;
+      ls_setJson("TC_config",TC_config);
+      config_update_UI(TC_config);
+
+    }
+    </script>
+</head>
+<body class="fullFrame">
+    <canvas id='myCanvas' class="left" height='48' width='64' style='border:1px solid #d3d3d3;'></canvas>
+    <div class="right">
+      <button class="cButton" onclick='flipX()'>Flip X</button>
+      <button class="cButton" onclick='rotate()'>ROTATE</button>
+      <br/>
+      <button  class="cButton" onclick='SOUND_toggle()'  id="sound_btn">SOUND:OFF</button>
+      <button  class="cButton" onclick='filterMode_toggle()'  id="filterMode_btn">Filter:0</button>
+      <br/>
+      <button  class="cButton" onclick='ws_stop()'  id="stop_btn">STOP</button>
+      <button class="cButton" onclick='ws_start()'  id="start_btn">START</button>
+      <input type="text" id="input_IP" name="input_IP" value="thermal.local:81">
+      <button class="sButton" onclick='url_setDefault()'  id="setUrlDefault_btn">X</button>
+      v0.0.1
+      <br/>
+      SPEED:<input type="range" min="1" max="5" value="5" class="slider" id="speedIdx_slider">
+      <br/>
+      SIZE :<input type="range" min="1" max="30" value="30" class="slider" id="pixSize_slider">
+      <br/>
+      -CALIB-<br/>
+      
+      <input id="calib_switch" type="checkbox" onclick="calib_switch_onclick(this);">
+      X<input id="input_calib_mult" type="number"  step="0.01">+<input id="input_calib_add" type="number" step="0.01">
+      <br/>
+      -----
+      <br/>
+      <input id="I_RAW_1" type="number"  step="0.01">  > <input id="O_MAP_1" type="number"  step="0.01">
+      <br/>
+      <input id="I_RAW_2" type="number"  step="0.01"> > <input id="O_MAP_2" type="number"  step="0.01">
+      <button  class="calib_2pt_calc_set" onclick='calib_2pt_calc_set()'  id="stop_btn">set</button>
+
+    </div>
+</body>
+
+</html>
