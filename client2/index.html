@@ -355,148 +355,193 @@
     let heatMapColor_HSL=[[240,100,10],[240,100,40],[120,100,80],[0,100,50],[0,100,90]];
 
 
+
+    let sm_ev={
+      NA:"NA",
+      OK:"OK",
+      NG:"NG",
+    }
+    let sm_state={
+      INIT:"INIT",
+      NORMAL:"NORMAL",
+      STABLIZE:"STABLIZE",
+      INSP_OK:"INSP_OK",
+      INSP_NG:"INSP_NG",
+      RESET_COUNT_DOWN:"RESET_COUNT_DOWN",
+      LOW_POW_STATE:"LOW_POW_STATE",
+    }
+    let sm_cur_state=sm_state.INIT;
+
+
+    function stateSwitch(cur_state,event,info_obj)
+    {
+      let new_state=cur_state;
+      switch(cur_state)
+      {
+        case sm_state.INIT: 
+          if(event==sm_ev.OK)
+          {
+            new_state=sm_state.NORMAL;
+          }
+        break;
+        case sm_state.NORMAL: 
+          if(event==sm_ev.OK)
+          {
+            new_state=sm_state.STABLIZE;
+          }
+        break;
+        case sm_state.STABLIZE: 
+          if(event==sm_ev.OK)
+          {
+            new_state=sm_state.INSP_OK;
+          }
+          else if(event==sm_ev.NG)
+          {
+            new_state=sm_state.INSP_NG;
+          }
+        break;
+        case sm_state.INSP_OK: 
+          if(event==sm_ev.NG)
+          {
+            new_state=sm_state.RESET_COUNT_DOWN;
+          }
+        break;
+        case sm_state.INSP_NG: 
+          if(event==sm_ev.NG)
+          {
+            new_state=sm_state.RESET_COUNT_DOWN;
+          }
+        break;
+        case sm_state.RESET_COUNT_DOWN: 
+          if(event==sm_ev.OK)
+          {
+            new_state=sm_state.NORMAL;
+          }
+        break;
+        case sm_state.LOW_POW_STATE: 
+        break;
+      }
+      if(new_state!=cur_state)
+      {
+        stateAction(cur_state,-1,info_obj);
+        stateAction(new_state,1,info_obj);
+      }
+      return new_state;
+    }
+
+    function stateAction(cur_state,exit_normal_enter,info_obj)
+    {
+
+      
+      if(info_obj.isStill)
+      {
+        info_obj.stillCounter++;
+      }
+      else
+      {
+        info_obj.stillCounter=0;
+      }
+      let ene=exit_normal_enter;
+      let new_state=cur_state;
+      switch(cur_state)
+      {
+        case sm_state.INIT: 
+        {
+          if(ene==-1|| ene==1)
+          {
+            break;
+          }
+          new_state=stateSwitch(cur_state,sm_ev.OK,info_obj);
+        }
+        break;
+        case sm_state.NORMAL: 
+          if(ene==-1|| ene==1)
+          {
+            break;
+          }
+          if(false)
+          {
+            new_state=stateSwitch(cur_state,sm_ev.OK,info_obj);
+          }
+        break;
+        case sm_state.STABLIZE: 
+          if(ene==-1|| ene==1)
+          {
+            break;
+          }
+          if(info_obj.stillCounter>=info_obj.stillCounter_thres)
+          {
+            new_state=stateSwitch(cur_state,sm_ev.OK,info_obj);
+          }
+        break;
+        case sm_state.INSP_OK: 
+          if(ene==-1|| ene==1)
+          {
+            break;
+          }
+          new_state=stateSwitch(cur_state,sm_ev.NA,info_obj);
+        break;
+        case sm_state.INSP_NG: 
+          if(ene==-1|| ene==1)
+          {
+            break;
+          }
+          new_state=stateSwitch(cur_state,sm_ev.NA,info_obj);
+        break;
+        case sm_state.RESET_COUNT_DOWN: 
+          if(ene==-1|| ene==1)
+          {
+            break;
+          }
+          new_state=stateSwitch(cur_state,sm_ev.NA,info_obj);
+        break;
+      }
+      
+
+      return new_state;
+
+    }
     // Log messages from the server
     let onmessage = function (e) {
+      // var time_ms_start = new Date().getTime();
+      onmessage_imp(e);
+      // var time_ms_end = new Date().getTime();
+      // console.log("duration:",time_ms_end-time_ms_start);
+    }
+    
+    let onmessage_imp=function (e) {
         if (e.data.length < 100) {
             return;
         }
-        frame_counter += 1;
-        let Frame_RMSE=0;
-        let isFrameStill=true;
-        let stillFrameThres=3;
-        var time_ms = new Date().getTime();
+        values_raw = new Int16Array(e.data);
 
-        let NG_TEMP=37.5;
-        const values_raw = new Int16Array(e.data);
-        if(mixPix===undefined)
-        {
-          mixPix= new Array(values_raw.length);
-          values_raw.forEach((mP,idx) => {
-            mixPix[idx]=1.0*mP;
-          });
-          stillFrameCounter=0;
-          
-        }
-        else
-        {
-          Frame_RMSE=0;
-          switch(TC_config.filterMode)
-          {
-            case 0:
-              
-              Frame_RMSE = Math.sqrt(
-                mixPix.reduce((s,v,idx)=>s+(v-values_raw[idx])*(v-values_raw[idx]),0)
-                  /mixPix.length);
-
-              values_raw.forEach((mP,idx) => {
-                mixPix[idx]=1.0*mP;
-              });
-              if(Frame_RMSE>55)isFrameStill=false;
-              break;
-            
-            case 1:
-              mixPix.forEach((mP,idx) => {
-                let diff = values_raw[idx]-mP;
-                if(diff<0)diff=-diff;
-                diff-=50;
-                let approachV=diff/150;
-                approachV*=approachV;
-                if(approachV>0.8)approachV=0.8;
-                if(approachV<0.1)approachV=0.1;
-                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
-                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
-                mixPix[idx]=newPixV;
-              });
-              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
-              
-              if(Frame_RMSE>30)isFrameStill=false;
-              break;
-            
-            case 2:
-              
-              mixPix.forEach((mP,idx) => {
-                if(values_raw[idx]>mP)
-                {
-                  mixPix[idx]=values_raw[idx];
-                  return;
-                }
-                let approachV=0.05;
-                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
-                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
-                mixPix[idx]=newPixV;
-              });
-              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
-
-              if(Frame_RMSE>5)isFrameStill=false;
-              break;
-
-            case 3:
-              
-              
-              let rmse = Math.sqrt(
-                mixPix.reduce((s,v,idx)=>
-                  s+(v-values_raw[idx])*(v-values_raw[idx]),0)/mixPix.length
-                  );
-              
-              rmse-=70;
-
-              rmse/=70;
-
-              if(rmse>1)rmse=1;
-              if(rmse<0.1)rmse=0.1;
-              let approachV=rmse;
-              mixPix.forEach((mP,idx) => {
-                let tmpap=approachV;
-                if(values_raw[idx]>mP)
-                {
-                  tmpap=1;
-                }
-                mixPix[idx]+=tmpap*(values_raw[idx]-mP);
-                
-                let newPixV=mP+tmpap*(values_raw[idx]-mP);
-                Frame_RMSE+=(newPixV-mP)*(newPixV-mP);
-                mixPix[idx]=newPixV;
-              });
-              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
-              
-              if(Frame_RMSE>17)isFrameStill=false;
-              break;
-          }
-        }
-
-        
 
         let img_W=32;
         let img_H=24;
 
-        const values=
-          (_ignore_calib==true)?mixPix.map(v=>(v/100.0)):mixPix.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
-
         var c2 = document.getElementById('myCanvas');
         var c2_context = c2.getContext('2d');
         c2_context.font = "40pt Arial";
+
+
         let heatMapBarW=10;
-        let W=((img_W*TC_config.pixSize)|0)+heatMapBarW;
+        let W=((img_W*TC_config.pixSize)|0);
         let H=(img_H*TC_config.pixSize)|0;
-
-
         switch(TC_config.rotateIdx)
         {
           case 0:
           case 2:
             c2.height=H;
-            c2.width=W;
+            c2.width=W+heatMapBarW;
           break;
           case 1:
           case 3:
 
-            c2.width=H;
+            c2.width=H+heatMapBarW;
             c2.height=W;
           break;
 
         }
-
-        
         let mappedW=img_W;
         let mappedH=img_H;
 
@@ -507,16 +552,9 @@
           mappedH=img_W;
         }
 
-        let f_region_ratio_x=0.2;
-        let f_region_ratio_y=0.2;
-        let f_region={x:mappedW*f_region_ratio_x,
-            w:mappedW*(1-f_region_ratio_x*2),
-
-            y:mappedH*f_region_ratio_y,
-            h:mappedH*(1-f_region_ratio_y*2)};
-
-
-        let remappedValues=values.map((_,idx)=>{
+        
+        
+        let indexMap=values_raw.map((_,idx)=>{
           
 
           let ypos = (idx/mappedW)| 0;
@@ -551,15 +589,32 @@
           }
           // console.log(xPos,yPos);
 
-          return values[srcX+srcY*img_W];
+          return srcX+srcY*img_W;
         })
 
         
+        
+        values_raw=indexMap.map((map_idx,c_idx)=>{
+          return values_raw[map_idx];
+        })
+
+
+        values_raw=
+        (_ignore_calib==true)?
+          values_raw.map(v=>(v/100.0)):
+          values_raw.map(v=>((v/100.0)*TC_config.tempCalibMult+TC_config.tempCalibOffset));
+
+        let f_region_ratio_x=0.25;
+        let f_region_ratio_y=0.25;
+        let f_region={x:mappedW*f_region_ratio_x,
+            w:mappedW*(1-f_region_ratio_x*2),
+
+            y:mappedH*f_region_ratio_y,
+            h:mappedH*(1-f_region_ratio_y*2)};
 
 
 
-
-        let valuesInRegion = remappedValues.filter((v,i)=>{
+        let filter_data_in_region=(v,i)=>{
           
           let yPos = (i/mappedW)| 0;//int div
           let xPos = i%mappedW;
@@ -572,7 +627,144 @@
           }
 
           return false;
-        })
+        }
+
+
+
+
+
+
+        let stateInfo={};
+        frame_counter += 1;
+        let Frame_RMSE=0;
+        let isFrameStill=true;
+        let stillFrameThres=3;
+        var time_ms = new Date().getTime();
+
+        let NG_TEMP=37.5;
+
+
+        let bk_mixPix;//copy
+        if(mixPix===undefined)
+        {
+          mixPix= new Array(values_raw.length);
+          values_raw.forEach((mP,idx) => {
+            mixPix[idx]=1.0*mP;
+          });
+          stillFrameCounter=0;
+          bk_mixPix=mixPix;
+        }
+        else
+        {
+          Frame_RMSE=0;
+          bk_mixPix=mixPix.slice();
+
+          switch(TC_config.filterMode)
+          {
+            case 0:
+              
+              Frame_RMSE = Math.sqrt(
+                mixPix.reduce((s,v,idx)=>s+(v-values_raw[idx])*(v-values_raw[idx]),0)
+                  /mixPix.length);
+
+              values_raw.forEach((mP,idx) => {
+                mixPix[idx]=1.0*mP;
+              });
+              if(Frame_RMSE>55)isFrameStill=false;
+              break;
+            
+            case 1:
+              mixPix.forEach((mP,idx) => {
+                let diff = values_raw[idx]-mP;
+                if(diff<0)diff=-diff;
+                diff-=0.5;
+                if(diff<0)diff=-diff;
+                let approachV=diff/3;
+                approachV*=approachV;
+                if(approachV>0.8)approachV=0.8;
+                if(approachV<0.1)approachV=0.1;
+                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+              
+              if(Frame_RMSE>0.4)isFrameStill=false;
+              break;
+            
+            case 2:
+              
+              mixPix.forEach((mP,idx) => {
+                if(values_raw[idx]>mP)
+                {
+                  mixPix[idx]=values_raw[idx];
+                  return;
+                }
+                let approachV=0.05;
+                let newPixV=mixPix[idx]+approachV*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mixPix[idx])*(newPixV-mixPix[idx]);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+
+              if(Frame_RMSE>0.05)isFrameStill=false;
+              break;
+
+            case 3:
+              
+              
+              let rmse = Math.sqrt(
+                mixPix.reduce((s,v,idx)=>
+                  s+(v-values_raw[idx])*(v-values_raw[idx]),0)/mixPix.length
+                  );
+              
+              rmse-=70;
+
+              rmse/=70;
+
+              if(rmse>1)rmse=1;
+              if(rmse<0.1)rmse=0.1;
+              let approachV=rmse;
+              mixPix.forEach((mP,idx) => {
+                let tmpap=approachV;
+                if(values_raw[idx]>mP)
+                {
+                  tmpap=1;
+                }
+                mixPix[idx]+=tmpap*(values_raw[idx]-mP);
+                
+                let newPixV=mP+tmpap*(values_raw[idx]-mP);
+                Frame_RMSE+=(newPixV-mP)*(newPixV-mP);
+                mixPix[idx]=newPixV;
+              });
+              Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
+              
+              if(Frame_RMSE>0.17)isFrameStill=false;
+              break;
+          }
+        }
+
+        Frame_RMSE =bk_mixPix
+          .map((v,i)=>mixPix[i]-v)//diff
+          .filter(filter_data_in_region)//find only in region
+          .reduce((s,v)=>[s[0]+v*v,s[1]+1],[0,0])//find diff energy
+
+        Frame_RMSE=Math.sqrt(Frame_RMSE[0]/Frame_RMSE[1])
+
+        isFrameStill=true;
+        if(Frame_RMSE>0.4)isFrameStill=false;
+        // console.log("Frame_RMSE:",Frame_RMSE," isFrameStill:",isFrameStill);
+
+
+
+        stateInfo.Frame_RMSE=Frame_RMSE;
+        stateInfo.isFrameStill=isFrameStill;
+        stateInfo.stillFrameThres=stillFrameThres;
+        stateInfo.time_ms=time_ms;
+        stateInfo.NG_TEMP=NG_TEMP;
+
+
+        let valuesInRegion = mixPix.filter(filter_data_in_region)
         const sortedValues_inRegion = valuesInRegion.slice().sort();
         // console.log(values);
         let highestTemp = sortedValues_inRegion[sortedValues_inRegion.length-1];
@@ -709,7 +901,7 @@
         }
 
         let highestPtInfo=undefined;
-        remappedValues.forEach((v,i)=>{
+        mixPix.forEach((v,i)=>{
           let yPos = (i/mappedW)| 0;//int div
           let xPos = i%mappedW;
 
