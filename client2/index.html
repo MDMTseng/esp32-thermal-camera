@@ -52,7 +52,7 @@
       //     });
       // }
     </script>
-    <script>
+    <script type="application/javascript">
 
     let _ignore_calib=false;
     function ls_setCamUrl(url)
@@ -353,6 +353,8 @@
 
     
     let heatMapColor_HSL=[[240,100,10],[240,100,40],[120,100,80],[0,100,50],[0,100,90]];
+
+
     // Log messages from the server
     let onmessage = function (e) {
         if (e.data.length < 100) {
@@ -361,7 +363,7 @@
         frame_counter += 1;
         let Frame_RMSE=0;
         let isFrameStill=true;
-        let stillFrameThres=5;
+        let stillFrameThres=3;
         var time_ms = new Date().getTime();
 
         let NG_TEMP=37.5;
@@ -407,7 +409,7 @@
               });
               Frame_RMSE=Math.sqrt(Frame_RMSE/mixPix.length);
               
-              if(Frame_RMSE>20)isFrameStill=false;
+              if(Frame_RMSE>30)isFrameStill=false;
               break;
             
             case 2:
@@ -603,9 +605,11 @@
 
 
         let highTempFillRate=sortedValues_inRegion.reduce(
-          (rv,v)=>(avgHighTemp-v)>5?rv:rv+1,0)/sortedValues_inRegion.length;
-        highTempFillRate/=0.5;
+          (rv,v)=>(avgHighTemp-v)>3.6?rv:rv+1,0)/sortedValues_inRegion.length;
+        highTempFillRate/=0.45;
         if(highTempFillRate>1)highTempFillRate=1;
+
+        if(avgHighTemp<34)highTempFillRate=0;
         // console.log(highTempFillRate)
         
         {//Find avgLowTemp
@@ -616,16 +620,6 @@
               avgLowTemp += sortedValues_inRegion[w+4];
           }
           avgLowTemp = avgLowTemp / lowCount;
-        }
-        let high = avgHighTemp;
-        let low = avgLowTemp;
-        if(high-low<10)
-        {
-          low=high-10;
-        }
-        if(high-low>30)
-        {
-          low=high-30;
         }
 
         if(highTempFillRate<1)
@@ -702,6 +696,17 @@
           ctx.strokeText(text, x, y);
 
         }
+        let hm_high = avgHighTemp;
+        let hm_low = avgLowTemp;
+        if(hm_high<35)hm_high=35;
+        if(hm_high-hm_low<10)
+        {
+          hm_low=hm_high-10;
+        }
+        if(hm_high-hm_low>20)
+        {
+          hm_low=hm_high-20;
+        }
 
         let highestPtInfo=undefined;
         remappedValues.forEach((v,i)=>{
@@ -729,7 +734,8 @@
             c2_context.strokeStyle = "#FF0000";
             drawStroke=true;
           }
-          let ratio = (v - low) / (high - low);
+          
+          let ratio = (v - hm_low) / (hm_high - hm_low);
           // c2_context.fillStyle = heatMapColorforValue(ratio);
           c2_context.fillStyle = heatMapColor_HSL_array(ratio,heatMapColor_HSL);
 
@@ -766,7 +772,7 @@
           let textSize=TC_config.pixSize;
           for(let i=0;i<tempLabelCount;i++)
           {
-            let temp=high+(low-high)*i/(tempLabelCount-1);
+            let temp=hm_high+(hm_low-hm_high)*i/(tempLabelCount-1);
             let y=20+(c2.height-10-20)*i/(tempLabelCount-1);
             printText(c2_context,temp.toFixed(1),          c2.width-textSize*2,y,textSize);
           }
@@ -776,13 +782,15 @@
 
         c2_context.save();
         c2_context.textAlign = "start";
-        let temp_text = "H:"+high.toFixed(2)+ " \nL:"+low.toFixed(2);
+        let temp_text = "H:"+avgHighTemp.toFixed(2)+ " \nL:"+avgLowTemp.toFixed(2);
         
         printText(c2_context,temp_text,TC_config.pixSize, TC_config.pixSize*2,TC_config.pixSize*2);
 
 
 
-
+        
+        c2_context.strokeRect(f_region.x*TC_config.pixSize, f_region.y*TC_config.pixSize, 
+          f_region.w*TC_config.pixSize,f_region.h*TC_config.pixSize);
         if(stillFrame_HighestTemp>34)
         {
 
@@ -799,23 +807,39 @@
           }
           else
           {
-            c2_context.fillStyle="rgba(255,0,0,"+0.8*(1-fillRatio/2)+")";
+            c2_context.fillStyle="rgba(255,0,0,0.5)";
           }
 
           c2_context.fillRect(f_region.x*TC_config.pixSize, f_region.y*TC_config.pixSize, 
           f_region.w*TC_config.pixSize,f_region.h*TC_config.pixSize*(1-fillRatio));
 
-
-          if(fillRatio==1 && stillFrameCounter<stillFrameThres)
+          c2_context.textAlign = "center";
+          c2_context.fillStyle= "#FFFFFF";
+          if(fillRatio==1)
           {
-
-            c2_context.textAlign = "center";
-            c2_context.fillStyle= "#FFFFFF";
-            let temp_text = "H:"+high.toFixed(2)+ " \nL:"+low.toFixed(2);
-            printText(c2_context,stillFrameThres-stillFrameCounter,
-            c2.width/2,c2.height/2,TC_config.pixSize*10);
+            if(stillFrameCounter<stillFrameThres)
+            {
+              let textSize=TC_config.pixSize*3;
+              printText(c2_context,"靜止",
+              c2.width/2,c2.height/2-textSize,textSize);
+              printText(c2_context,(stillFrameThres-stillFrameCounter),
+              c2.width/2,c2.height/2,textSize);
+            }
+          }
+          else
+          {
+            let textSize=TC_config.pixSize*3;
+            printText(c2_context,"請將臉",
+              c2.width/2,c2.height/2-textSize,textSize);
+            printText(c2_context,"靠近方框",
+              c2.width/2,c2.height/2,textSize);
+            printText(c2_context,(fillRatio*100).toFixed(0)+"%",
+              c2.width/2,c2.height/2+textSize,textSize);
           }
 
+        }
+        else
+        {
         }
 
 
